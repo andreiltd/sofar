@@ -1,0 +1,19 @@
+[package]
+name = "sofar"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+authors = ["Tomasz Andrzejak <andreiltd@gmail.com>"]
+keywords = ["libmysofa", "hrtf", "aes69"]
+description = "Rust bindings for the libmysofa library"
+repository = "https://github.com/andreiltd/sofar"
+homepage = "https://github.com/andreiltd/sofar"
+categories = ["audio", "filesystem"]
+
+[workspace]
+members = [".", "libmysofa-sys"]
+default-members = [".", "libmysofa-sys"]
+
+[dependencies]
+ffi = { package = "libmysofa-sys", version = "*", path = "libmysofa-sys" }
+thiserror = "1.0"
