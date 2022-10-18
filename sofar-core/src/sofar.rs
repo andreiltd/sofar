@@ -68,7 +68,7 @@ impl OpenOptions {
 
     /// Open a SOFA file at `path` with open options specified in `self`
     ///
-    /// ~~~no_run
+    /// ```no_run
     /// use sofar::OpenOptions;
     ///
     /// let sofa = OpenOptions::new()
@@ -76,7 +76,7 @@ impl OpenOptions {
     ///     .sample_rate(44100.0)
     ///     .open("my/sofa/file.sofa")
     ///     .unwrap();
-    /// ~~~
+    /// ```
     pub fn open<P: AsRef<Path>>(&self, path: P) -> Result<Sofar, Error> {
         let path = cstr(path.as_ref())?;
         let mut filter_len = 0;
@@ -132,24 +132,25 @@ pub struct Sofar {
     cached: bool,
 }
 
-pub struct Filter<'a> {
+pub struct Filter {
     /// Impulse Response of FIR filter for left channel
-    pub left: &'a mut [f32],
+    pub left: Box<[f32]>,
     /// Impulse Response of FIR filter for right channel
-    pub right: &'a mut [f32],
-    /// The amount of time in seconds that left and right channels should be
-    /// delayed for, [left, right]
-    pub delays: &'a mut [f32; 2],
+    pub right: Box<[f32]>,
+    /// The amount of time in seconds that left channel should be delayed for
+    pub ldelay: f32,
+    /// The amount of time in seconds that right channel should be delayed for
+    pub rdelay: f32,
 }
 
 impl Sofar {
     /// Open a SOFA file with the default open options
     ///
-    /// ~~~no_run
+    /// ```no_run
     /// use sofar::Sofar;
     ///
     /// let sofa = Sofar::open("my/sofa/file.sofa").unwrap();
-    /// ~~~
+    /// ```
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Sofar, Error> {
         OpenOptions::new().open(path)
     }
@@ -164,7 +165,7 @@ impl Sofar {
     /// delayed by left and right delay and FIR filtered by left and right
     /// impulse response.
     ///
-    /// ~~~no_run
+    /// ```no_run
     /// use sofar::{Sofar, Filter};
     ///
     /// let sofa = Sofar::open("my/sofa/file.sofa").unwrap();
@@ -172,23 +173,23 @@ impl Sofar {
     ///
     /// let mut left = vec![0.0; filt_len];
     /// let mut right = vec![0.0; filt_len];
-    /// let mut delays = [0.0; 2];
     ///
-    /// let filter = Filter {
-    ///     left: left.as_mut_slice(),
-    ///     right: right.as_mut_slice(),
-    ///     delays: &mut delays,
+    /// let mut filter = Filter {
+    ///     left: left.into_boxed_slice(),
+    ///     right: right.into_boxed_slice(),
+    ///     rdelay: 0.0,
+    ///     ldelay: 0.0,
     /// };
     ///
-    /// sofa.filter(0.0, 1.0, 0.0, filter);
-    /// ~~~
+    /// sofa.filter(0.0, 1.0, 0.0, &mut filter);
+    /// ```
     ///
     /// # Panics
     ///
     /// This method panics if:
     /// - `filter.left.len() < self.filter_len`
     /// - `filter.right.len() < self.filter_len`
-    pub fn filter(&self, x: f32, y: f32, z: f32, filter: Filter) {
+    pub fn filter(&self, x: f32, y: f32, z: f32, filter: &mut Filter) {
         assert!(filter.left.len() >= self.filter_len);
         assert!(filter.right.len() >= self.filter_len);
 
@@ -200,8 +201,8 @@ impl Sofar {
                 z,
                 filter.left.as_mut_ptr(),
                 filter.right.as_mut_ptr(),
-                &mut filter.delays[0],
-                &mut filter.delays[1],
+                &mut filter.ldelay,
+                &mut filter.rdelay,
             );
         }
     }
@@ -216,7 +217,7 @@ impl Sofar {
     /// This method panics if:
     /// - `filter.left.len() < self.filter_len`
     /// - `filter.right.len() < self.filter_len`
-    pub fn filter_nointerp(&self, x: f32, y: f32, z: f32, filter: Filter) {
+    pub fn filter_nointerp(&self, x: f32, y: f32, z: f32, filter: &mut Filter) {
         assert!(filter.left.len() >= self.filter_len);
         assert!(filter.right.len() >= self.filter_len);
 
@@ -228,8 +229,8 @@ impl Sofar {
                 z,
                 filter.left.as_mut_ptr(),
                 filter.right.as_mut_ptr(),
-                &mut filter.delays[0],
-                &mut filter.delays[1],
+                &mut filter.ldelay,
+                &mut filter.rdelay,
             );
         }
     }

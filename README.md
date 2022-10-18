@@ -6,20 +6,22 @@ for Acoustics).
 # Example
 
 ```rust
-let sofa = Sofar::open("libmysofa-sys/libmysofa/tests/tester.sofa").unwrap();
+use sofar::{Sofar, Filter};
+
+let sofa = Sofar::open("my/sofa/file.sofa").unwrap();
 let filt_len = sofa.filter_len();
 
 let mut left = vec![0.0; filt_len];
 let mut right = vec![0.0; filt_len];
-let mut delays = [0.0; 2];
 
-let filter = Filter {
-    left: left.as_mut_slice(),
-    right: right.as_mut_slice(),
-    delays: &mut delays,
+let mut filter = Filter {
+    left: left.into_boxed_slice(),
+    right: right.into_boxed_slice(),
+    rdelay: 0.0,
+    ldelay: 0.0,
 };
 
-sofa.filter(0.0, 1.0, 0.0, filter);
+sofa.filter(0.0, 1.0, 0.0, &mut filter);
 
 // apply_delays();
 // apply_filters();
