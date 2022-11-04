@@ -3,11 +3,12 @@
 members = [
     "sofar-core",
     "sofar-dsp",
-    "libmysofa-sys"
+    "libmysofa-sys",
+    "examples/*",
 ]
 
 default-members = [
     "sofar-core",
     "sofar-dsp",
-    "libmysofa-sys"
+    "libmysofa-sys",
 ]

@@ -11,16 +11,7 @@ use sofar::{Sofar, Filter};
 let sofa = Sofar::open("my/sofa/file.sofa").unwrap();
 let filt_len = sofa.filter_len();
 
-let mut left = vec![0.0; filt_len];
-let mut right = vec![0.0; filt_len];
-
-let mut filter = Filter {
-    left: left.into_boxed_slice(),
-    right: right.into_boxed_slice(),
-    rdelay: 0.0,
-    ldelay: 0.0,
-};
-
+let mut filter = Filter::new(filt_len);
 sofa.filter(0.0, 1.0, 0.0, &mut filter);
 
 // apply_delays();

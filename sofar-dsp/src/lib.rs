@@ -110,8 +110,26 @@ impl Channel {
             delay,
         }
     }
+
+    fn delay<O>(&mut self, mut buf: O)
+    where
+        O: AsMut<[f32]>,
+    {
+        if let Some(delay) = self.delay.as_mut() {
+            delay.apply(buf.as_mut());
+        }
+    }
+
+    fn update_delay(&mut self, new_delay: usize) {
+        if let Some(delay) = self.delay.as_mut() {
+            if new_delay != delay.delay {
+                delay.set_delay(new_delay)
+            }
+        }
+    }
 }
 
+#[must_use]
 pub struct RendererBuilder {
     sample_rate: f32,
     kernel_len: usize,
@@ -121,7 +139,7 @@ pub struct RendererBuilder {
 }
 
 impl RendererBuilder {
-    pub fn new(kernel_len: usize) -> RendererBuilder {
+    fn new(kernel_len: usize) -> RendererBuilder {
         RendererBuilder {
             kernel_len,
             sample_rate: DEFAULT_SAMPLE_RATE,
@@ -226,18 +244,9 @@ impl Renderer {
     /// # Panics
     ///
     /// This method panics if:
-    /// - `input.len() != left.len()`
-    /// - `input.len() != right.len()`
-    pub fn render_block<I: AsRef<[f32]>, O: AsMut<[f32]>>(
-        &mut self,
-        filt: &Filter,
-        input: I,
-        mut left: O,
-        mut right: O,
-    ) -> Result<(), Error> {
+    /// - `filt.left.len() != filt.right.len())`
+    pub fn update_filter(&mut self, filt: &Filter) -> Result<(), Error> {
         assert_eq!(filt.left.len(), filt.right.len());
-        assert_eq!(left.as_mut().len(), input.as_ref().len());
-        assert_eq!(right.as_mut().len(), input.as_ref().len());
 
         if self.state.kernel_len != filt.left.len() {
             return Err(Error::InvalidFilterLength(
@@ -245,6 +254,31 @@ impl Renderer {
                 self.state.kernel_len,
             ));
         }
+
+        self.state.filt_split(&filt.left, &mut self.left.h)?;
+        self.state.filt_split(&filt.right, &mut self.right.h)?;
+
+        self.left
+            .update_delay((filt.ldelay * self.state.sample_rate) as usize);
+        self.right
+            .update_delay((filt.rdelay * self.state.sample_rate) as usize);
+
+        Ok(())
+    }
+
+    /// # Panics
+    ///
+    /// This method panics if:
+    /// - `input.len() != left.len()`
+    /// - `input.len() != right.len()`
+    pub fn process_block<I: AsRef<[f32]>, O: AsMut<[f32]>>(
+        &mut self,
+        input: I,
+        mut left: O,
+        mut right: O,
+    ) -> Result<(), Error> {
+        assert_eq!(left.as_mut().len(), input.as_ref().len());
+        assert_eq!(right.as_mut().len(), input.as_ref().len());
 
         if usize::rem_euclid(left.as_mut().len(), self.state.block_len) != 0 {
             return Err(Error::InvalidInputOutputLen(
@@ -254,13 +288,12 @@ impl Renderer {
         }
 
         self.state
-            .conv(&mut self.left, &filt.left, input.as_ref(), left.as_mut())?;
+            .conv(&mut self.left, input.as_ref(), left.as_mut())?;
         self.state
-            .conv(&mut self.right, &filt.right, input.as_ref(), right.as_mut())?;
+            .conv(&mut self.right, input.as_ref(), right.as_mut())?;
 
-        self.state.delay(&mut self.left, left.as_mut(), filt.ldelay);
-        self.state
-            .delay(&mut self.right, right.as_mut(), filt.rdelay);
+        self.left.delay(left.as_mut());
+        self.right.delay(right.as_mut());
 
         Ok(())
     }
@@ -294,13 +327,7 @@ struct State {
 }
 
 impl State {
-    fn conv<I, O>(
-        &mut self,
-        channel: &mut Channel,
-        taps: &[f32],
-        x: I,
-        mut y: O,
-    ) -> Result<(), Error>
+    fn conv<I, O>(&mut self, channel: &mut Channel, x: I, mut y: O) -> Result<(), Error>
     where
         I: AsRef<[f32]>,
         O: AsMut<[f32]>,
@@ -311,8 +338,6 @@ impl State {
         let spectra_len = self.fft_len / 2 + 1;
         let block_len = self.block_len;
         let scale = self.fft_len as f32;
-
-        self.filt_split(taps, &mut channel.h)?;
 
         let mut off = 0;
 
@@ -409,21 +434,6 @@ impl State {
 
         Ok(())
     }
-
-    fn delay<O>(&mut self, channel: &mut Channel, mut buf: O, new_delay: f32)
-    where
-        O: AsMut<[f32]>,
-    {
-        if let Some(delay) = channel.delay.as_mut() {
-            let new_delay = (new_delay * self.sample_rate) as usize;
-
-            if new_delay != delay.delay {
-                delay.set_delay(new_delay)
-            }
-
-            delay.apply(buf.as_mut());
-        }
-    }
 }
 
 #[cfg(test)]
@@ -500,8 +510,10 @@ mod tests {
                 rdelay: 0.0,
             };
 
+            renderer.update_filter(&filt).expect("filter updated");
+
             renderer
-                .render_block(&filt, &input, &mut left, &mut right)
+                .process_block(&input, &mut left, &mut right)
                 .expect("render block");
 
             let expected = convolve_from_definition(input.to_vec(), h.to_vec());

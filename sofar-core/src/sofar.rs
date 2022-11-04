@@ -126,12 +126,6 @@ impl Default for OpenOptions {
     }
 }
 
-pub struct Sofar {
-    raw: *mut ffi::MYSOFA_EASY,
-    filter_len: usize,
-    cached: bool,
-}
-
 pub struct Filter {
     /// Impulse Response of FIR filter for left channel
     pub left: Box<[f32]>,
@@ -141,6 +135,23 @@ pub struct Filter {
     pub ldelay: f32,
     /// The amount of time in seconds that right channel should be delayed for
     pub rdelay: f32,
+}
+
+impl Filter {
+    pub fn new(filt_len: usize) -> Self {
+        Self {
+            left: vec![0.0; filt_len].into_boxed_slice(),
+            right: vec![0.0; filt_len].into_boxed_slice(),
+            ldelay: 0.0,
+            rdelay: 0.0,
+        }
+    }
+}
+
+pub struct Sofar {
+    raw: *mut ffi::MYSOFA_EASY,
+    filter_len: usize,
+    cached: bool,
 }
 
 impl Sofar {
@@ -171,15 +182,7 @@ impl Sofar {
     /// let sofa = Sofar::open("my/sofa/file.sofa").unwrap();
     /// let filt_len = sofa.filter_len();
     ///
-    /// let mut left = vec![0.0; filt_len];
-    /// let mut right = vec![0.0; filt_len];
-    ///
-    /// let mut filter = Filter {
-    ///     left: left.into_boxed_slice(),
-    ///     right: right.into_boxed_slice(),
-    ///     rdelay: 0.0,
-    ///     ldelay: 0.0,
-    /// };
+    /// let mut filter = Filter::new(filt_len);
     ///
     /// sofa.filter(0.0, 1.0, 0.0, &mut filter);
     /// ```

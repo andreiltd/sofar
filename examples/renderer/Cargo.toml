@@ -1,0 +1,15 @@
+[package]
+name = "renderer"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+sofar = { path = "../../sofar-core"}
+sofar-dsp = { path = "../../sofar-dsp"}
+
+anyhow = "1"
+cpal = "0.14"
+hound = "3"
+ringbuf = "0.3"
