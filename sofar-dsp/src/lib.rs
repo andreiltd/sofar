@@ -20,6 +20,56 @@ pub enum Error {
     InternalProcessingError(#[from] realfft::FftError),
 }
 
+struct Delay {
+    buf: Vec<f32>,
+    delay: usize,
+    rpos: usize,
+    wpos: usize,
+}
+
+impl Delay {
+    fn new(delay: usize) -> Self {
+        Self {
+            buf: vec![0.0; delay + 1],
+            delay,
+            rpos: 1,
+            wpos: 0,
+        }
+    }
+
+    fn set_delay(&mut self, delay: usize) {
+        let n = self.buf.len();
+
+        if delay >= n {
+            self.buf.resize(delay + 1, 0.0)
+        }
+
+        if self.wpos >= delay {
+            self.rpos = self.wpos - delay;
+        } else {
+            self.rpos = n + self.wpos - delay;
+        }
+
+        self.delay = delay;
+    }
+
+    fn next(&mut self, input: f32) -> f32 {
+        self.buf[self.wpos] = input;
+        self.wpos = (self.wpos + 1) % self.buf.len();
+
+        let output = self.buf[self.rpos];
+        self.rpos = (self.rpos + 1) % self.buf.len();
+
+        output
+    }
+
+    fn apply(&mut self, buf: &mut [f32]) {
+        for sample in buf {
+            *sample = self.next(*sample);
+        }
+    }
+}
+
 struct Channel {
     /// impulse response split into partition blocks
     h: Box<[Complex<f32>]>,
@@ -28,7 +78,7 @@ struct Channel {
     /// input blocks time domain delay line
     x_tdl: Box<[f32]>,
     /// left channel delay state
-    delay: Option<Box<[f32]>>,
+    delay: Option<Delay>,
 }
 
 impl Channel {
@@ -47,7 +97,7 @@ impl Channel {
 
         let delay = delay.and_then(|delay| {
             if delay > 0.0 {
-                Some(vec![0.0; (delay * sample_rate) as usize].into_boxed_slice())
+                Some(Delay::new((delay * sample_rate) as usize))
             } else {
                 None
             }
@@ -150,6 +200,7 @@ impl RendererBuilder {
             rfft_scratch,
             ifft_scratch,
             partitions,
+            sample_rate: self.sample_rate,
             kernel_len: self.kernel_len,
             block_len: self.block_len,
         };
@@ -207,11 +258,17 @@ impl Renderer {
         self.state
             .conv(&mut self.right, &filt.right, input.as_ref(), right.as_mut())?;
 
+        self.state.delay(&mut self.left, left.as_mut(), filt.ldelay);
+        self.state
+            .delay(&mut self.right, right.as_mut(), filt.rdelay);
+
         Ok(())
     }
 }
 
 struct State {
+    /// Sample rate
+    sample_rate: f32,
     /// Length of the filter
     kernel_len: usize,
     /// Length of the processing block in samples
@@ -237,13 +294,17 @@ struct State {
 }
 
 impl State {
-    fn conv<I: AsRef<[f32]>, O: AsMut<[f32]>>(
+    fn conv<I, O>(
         &mut self,
         channel: &mut Channel,
         taps: &[f32],
         x: I,
         mut y: O,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        I: AsRef<[f32]>,
+        O: AsMut<[f32]>,
+    {
         let x = x.as_ref();
         let y = y.as_mut();
 
@@ -347,6 +408,21 @@ impl State {
         }
 
         Ok(())
+    }
+
+    fn delay<O>(&mut self, channel: &mut Channel, mut buf: O, new_delay: f32)
+    where
+        O: AsMut<[f32]>,
+    {
+        if let Some(delay) = channel.delay.as_mut() {
+            let new_delay = (new_delay * self.sample_rate) as usize;
+
+            if new_delay != delay.delay {
+                delay.set_delay(new_delay)
+            }
+
+            delay.apply(buf.as_mut());
+        }
     }
 }
 
@@ -488,5 +564,21 @@ mod tests {
             .block_len(32)
             .input_len(32)
             .run();
+    }
+
+    #[test]
+    fn delay() {
+        let mut delay = Delay::new(42);
+        let mut input = (1..=128).map(|v| v as f32).collect::<Vec<_>>();
+        let mut expected = input.clone();
+
+        expected.rotate_right(42);
+
+        for i in 0..42 {
+            expected[i] = 0.0;
+        }
+
+        delay.apply(input.as_mut_slice());
+        assert_eq!(input, expected);
     }
 }
