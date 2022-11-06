@@ -3,6 +3,7 @@ name = "sofar"
 version = "0.1.0"
 edition = "2021"
 readme = "README.md"
+license = "MIT OR Apache-2.0"
 authors = ["Tomasz Andrzejak <andreiltd@gmail.com>"]
 keywords = ["libmysofa", "hrtf", "aes69"]
 description = "Rust bindings for the libmysofa library"
