@@ -56,7 +56,7 @@ render.process_block(&input, &mut left, &mut right).unwrap();
 You can run `cpal` renderer example like this:
 
 ``` shell
-cargo run --example renderer -- <FILENAME-MONO.wav> <FILENAME.sofa>
+cargo run --example renderer -- <FILENAME-MONO.wav> libmysofa-sys/libmysofa/share/default.sofa
 
 ```
 
