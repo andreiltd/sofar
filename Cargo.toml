@@ -9,7 +9,7 @@ keywords = ["libmysofa", "hrtf", "aes69"]
 description = "Rust bindings for the libmysofa library"
 repository = "https://github.com/andreiltd/sofar"
 homepage = "https://github.com/andreiltd/sofar"
-categories = ["audio", "filesystem"]
+categories = ["algorithms", "filesystem", "multimedia::audio"]
 
 [features]
 default = ["dsp"]
