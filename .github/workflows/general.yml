@@ -8,22 +8,27 @@ env:
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macOS-latest]
+        rust: [stable, beta]
     steps:
-      - name: Install alsa dev
-        run: sudo apt-get install -y libasound2-dev
-
-      - uses: actions/checkout@v2
-        with:
-          submodules: true
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
+    - uses: hecrj/setup-rust-action@v1
+      with:
+        rust-version: ${{ matrix.rust }}
+    - uses: actions/checkout@v2
+      with:
+        submodules: true
+    - name: Install dependencies
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        export DEBIAN_FRONTED=noninteractive
+        sudo apt-get -qq update
+        sudo apt-get install -y libasound2-dev
+    - name: Run tests
+      run: |
+        cargo test --verbose --workspace
 
   fmt:
     name: Rustfmt
