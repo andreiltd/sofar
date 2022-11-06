@@ -1,7 +1,9 @@
-use crate::Error;
+//! This module provides high level bindings to [`libmysofa`] API allows to read
+//! `HRTF` filters from `SOFA` files (Spatially Oriented Format for Acoustics).
+//!
+//! [`libmysofa`]: https://github.com/hoene/libmysofa
 
-use std::ffi::CString;
-use std::path::Path;
+use std::{ffi::CString, io, path::Path};
 
 const DEFAULT_CACHED: bool = false;
 const DEFAULT_NORMALIZED: bool = true;
@@ -10,6 +12,65 @@ const DEFAULT_SAMPLE_RATE: f32 = 48000.0;
 
 const DEFAULT_NEIGHBOR_ANGLE_STEP: f32 = ffi::MYSOFA_DEFAULT_NEIGH_STEP_ANGLE as f32;
 const DEFAULT_NEIGHBOR_RADIUS_STEP: f32 = ffi::MYSOFA_DEFAULT_NEIGH_STEP_RADIUS as f32;
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("IO error")]
+    Io(#[from] std::io::Error),
+    #[error("The owls are not what they seem")]
+    InternalError,
+    #[error("Invalid data format")]
+    InvalidFormat,
+    #[error("Format is not supported")]
+    UnsupportedFormat,
+    #[error("Invalid attributes")]
+    InvalidAttributes,
+    #[error("Invalid dimensions")]
+    InvalidDimensions,
+    #[error("Invalid dimension list")]
+    InvalidDimensionList,
+    #[error("Invalid coordinate type")]
+    InvalidCoordinateType,
+    #[error("Invalid receiver position")]
+    InvalidReceiverPositions,
+    #[error("Emitters without ECI are not supported")]
+    OnlyEmitterWithEciSupported,
+    #[error("Delays without IR or MR are not supported")]
+    OnlyDelaysWithIrOrMrSupported,
+    #[error("Sources without MC are not supported")]
+    OnlySourcesWithMcSupported,
+    #[error("Sampling rates differ")]
+    OnlyTheSameSamplingRateSupported,
+}
+
+impl Error {
+    pub(crate) fn from_raw(err: i32) -> Error {
+        use Error::*;
+
+        match err {
+            ffi::MYSOFA_INVALID_FORMAT => InvalidFormat,
+            ffi::MYSOFA_UNSUPPORTED_FORMAT => UnsupportedFormat,
+            ffi::MYSOFA_INVALID_ATTRIBUTES => InvalidAttributes,
+            ffi::MYSOFA_INVALID_DIMENSIONS => InvalidDimensions,
+            ffi::MYSOFA_INVALID_DIMENSION_LIST => InvalidDimensionList,
+            ffi::MYSOFA_INVALID_COORDINATE_TYPE => InvalidCoordinateType,
+            ffi::MYSOFA_INVALID_RECEIVER_POSITIONS => InvalidReceiverPositions,
+            ffi::MYSOFA_ONLY_EMITTER_WITH_ECI_SUPPORTED => OnlyEmitterWithEciSupported,
+            ffi::MYSOFA_ONLY_DELAYS_WITH_IR_OR_MR_SUPPORTED => OnlyDelaysWithIrOrMrSupported,
+            ffi::MYSOFA_ONLY_SOURCES_WITH_MC_SUPPORTED => OnlySourcesWithMcSupported,
+            ffi::MYSOFA_ONLY_THE_SAME_SAMPLING_RATE_SUPPORTED => OnlyTheSameSamplingRateSupported,
+            ffi::MYSOFA_READ_ERROR => Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                "Unable to read from file",
+            )),
+            ffi::MYSOFA_NO_MEMORY => Io(io::Error::new(
+                io::ErrorKind::OutOfMemory,
+                "Ran out of memory",
+            )),
+            _ => Error::InternalError,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct OpenOptions {
@@ -69,7 +130,7 @@ impl OpenOptions {
     /// Open a SOFA file at `path` with open options specified in `self`
     ///
     /// ```no_run
-    /// use sofar::OpenOptions;
+    /// use sofar::reader::OpenOptions;
     ///
     /// let sofa = OpenOptions::new()
     ///     .normalized(false)
@@ -158,7 +219,7 @@ impl Sofar {
     /// Open a SOFA file with the default open options
     ///
     /// ```no_run
-    /// use sofar::Sofar;
+    /// use sofar::reader::Sofar;
     ///
     /// let sofa = Sofar::open("my/sofa/file.sofa").unwrap();
     /// ```
@@ -177,7 +238,7 @@ impl Sofar {
     /// impulse response.
     ///
     /// ```no_run
-    /// use sofar::{Sofar, Filter};
+    /// use sofar::reader::{Sofar, Filter};
     ///
     /// let sofa = Sofar::open("my/sofa/file.sofa").unwrap();
     /// let filt_len = sofa.filter_len();
@@ -212,7 +273,7 @@ impl Sofar {
 
     /// Get HRTF filter for a given position with no interpolation
     ///
-    /// Similar to [`filter`](crate::Sofar::filter) method but it will skip the linear
+    /// Similar to [`filter`](crate::reader::Filter) method but it will skip the linear
     /// interpolation and return the filter for the nearest position instead.
     ///
     /// # Panics

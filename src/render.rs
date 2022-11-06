@@ -1,12 +1,20 @@
+//! This module implements uniformly partitioned convolution algorithm for
+//! rendering HRTF filters.
+//!
+//! For more details about the alogorithm used check Chapter 5 of Partitioned
+//! convolution algorithms for real-time auralization: [`Book`]
+//!
+//! [`Book`]: https://publications.rwth-aachen.de/record/466561/files/466561.pdf
+
 use std::sync::Arc;
 
-use sofar::Filter;
+use crate::reader::Filter;
 
 use realfft::num_complex::Complex;
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 
 const DEFAULT_SAMPLE_RATE: f32 = 48000.0;
-const DEFAULT_BLOCK_LEN: usize = 256;
+const DEFAULT_PARTITION_LEN: usize = 256;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -132,43 +140,52 @@ impl Channel {
 #[must_use]
 pub struct RendererBuilder {
     sample_rate: f32,
-    kernel_len: usize,
-    block_len: usize,
+    filter_len: usize,
+    partition_len: usize,
     left_delay: Option<f32>,
     right_delay: Option<f32>,
 }
 
 impl RendererBuilder {
-    fn new(kernel_len: usize) -> RendererBuilder {
+    fn new(filter_len: usize) -> RendererBuilder {
         RendererBuilder {
-            kernel_len,
+            filter_len,
             sample_rate: DEFAULT_SAMPLE_RATE,
-            block_len: DEFAULT_BLOCK_LEN,
+            partition_len: DEFAULT_PARTITION_LEN,
             left_delay: None,
             right_delay: None,
         }
     }
 
+    /// Set sampling rate of HRTF data. Default value is 48_000.0.
     pub fn with_sample_rate(mut self, sample_rate: f32) -> Self {
         self.sample_rate = sample_rate;
         self
     }
 
-    pub fn with_block_len(mut self, block_len: usize) -> Self {
-        self.block_len = block_len;
+    /// Set partition size for uniformly partitioned convolution algorithm.
+    pub fn with_partition_len(mut self, partition_len: usize) -> Self {
+        self.partition_len = partition_len;
         self
     }
 
+    /// Set the amount of time in seconds that left channel should be delayed
+    /// for.
     pub fn with_left_delay(mut self, left_delay: f32) -> Self {
         self.left_delay = Some(left_delay);
         self
     }
 
+    /// Set the amount of time in seconds that right channel should be delayed
+    /// for.
     pub fn with_right_delay(mut self, right_delay: f32) -> Self {
         self.right_delay = Some(right_delay);
         self
     }
 
+    /// Try to build [Renderer](crate::render::Renderer)
+    ///
+    /// This will fail if sampling rate set is invalid, e.g.: is negative or 0.
     pub fn build(self) -> Result<Renderer, Error> {
         let sample_rate = match self.sample_rate.is_normal() && self.sample_rate.is_sign_positive()
         {
@@ -176,9 +193,9 @@ impl RendererBuilder {
             false => return Err(Error::InvalidSampleRate(self.sample_rate)),
         };
 
-        let partitions = (self.kernel_len + self.block_len - 1) / self.block_len;
+        let partitions = (self.filter_len + self.partition_len - 1) / self.partition_len;
 
-        let fft_len = self.block_len * 2;
+        let fft_len = self.partition_len * 2;
         let spectra_len = fft_len / 2 + 1;
         let zero = Complex::new(0.0, 0.0);
 
@@ -219,8 +236,8 @@ impl RendererBuilder {
             ifft_scratch,
             partitions,
             sample_rate: self.sample_rate,
-            kernel_len: self.kernel_len,
-            block_len: self.block_len,
+            filter_len: self.filter_len,
+            partition_len: self.partition_len,
         };
 
         Ok(Renderer { left, right, state })
@@ -237,21 +254,24 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn builder(kernel_len: usize) -> RendererBuilder {
-        RendererBuilder::new(kernel_len)
+    /// Get default [`renderer builder`](crate::render::RendererBuilder)
+    pub fn builder(filter_len: usize) -> RendererBuilder {
+        RendererBuilder::new(filter_len)
     }
 
+    /// Set filter
+    ///
     /// # Panics
     ///
     /// This method panics if:
     /// - `filt.left.len() != filt.right.len())`
-    pub fn update_filter(&mut self, filt: &Filter) -> Result<(), Error> {
+    pub fn set_filter(&mut self, filt: &Filter) -> Result<(), Error> {
         assert_eq!(filt.left.len(), filt.right.len());
 
-        if self.state.kernel_len != filt.left.len() {
+        if self.state.filter_len != filt.left.len() {
             return Err(Error::InvalidFilterLength(
                 filt.left.len(),
-                self.state.kernel_len,
+                self.state.filter_len,
             ));
         }
 
@@ -266,6 +286,12 @@ impl Renderer {
         Ok(())
     }
 
+    /// Process a block of input samples and render output to left and right
+    /// channels.
+    ///
+    /// The requirement for the size of input block is that it is a multiple of
+    /// partition length. See [`RendererBuilder::with_partition_len()`].
+    ///
     /// # Panics
     ///
     /// This method panics if:
@@ -280,10 +306,10 @@ impl Renderer {
         assert_eq!(left.as_mut().len(), input.as_ref().len());
         assert_eq!(right.as_mut().len(), input.as_ref().len());
 
-        if usize::rem_euclid(left.as_mut().len(), self.state.block_len) != 0 {
+        if usize::rem_euclid(left.as_mut().len(), self.state.partition_len) != 0 {
             return Err(Error::InvalidInputOutputLen(
                 left.as_mut().len(),
-                self.state.block_len,
+                self.state.partition_len,
             ));
         }
 
@@ -303,9 +329,9 @@ struct State {
     /// Sample rate
     sample_rate: f32,
     /// Length of the filter
-    kernel_len: usize,
-    /// Length of the processing block in samples
-    block_len: usize,
+    filter_len: usize,
+    /// Length of the processing partition in samples
+    partition_len: usize,
     /// Number of the partitions for uniformly partitioned convolution
     partitions: usize,
     /// FFT size
@@ -336,7 +362,7 @@ impl State {
         let y = y.as_mut();
 
         let spectra_len = self.fft_len / 2 + 1;
-        let block_len = self.block_len;
+        let block_len = self.partition_len;
         let scale = self.fft_len as f32;
 
         let mut off = 0;
@@ -401,7 +427,7 @@ impl State {
         assert!(taps.len() <= h.len());
 
         let spectra_len = self.fft_len / 2 + 1;
-        let block_len = self.block_len;
+        let block_len = self.partition_len;
 
         let mut off = 0;
         let mut iter = taps.chunks_exact(block_len);
@@ -456,29 +482,29 @@ mod tests {
 
     #[must_use]
     struct ConvTest {
-        kernel_len: usize,
-        block_len: usize,
+        filter_len: usize,
         input_len: usize,
+        partition_len: usize,
     }
 
     impl Default for ConvTest {
         fn default() -> Self {
             Self {
-                kernel_len: 256,
-                block_len: 64,
+                filter_len: 256,
                 input_len: 128,
+                partition_len: 64,
             }
         }
     }
 
     impl ConvTest {
-        fn kernel_len(mut self, kernel_len: usize) -> Self {
-            self.kernel_len = kernel_len;
+        fn filter_len(mut self, filter_len: usize) -> Self {
+            self.filter_len = filter_len;
             self
         }
 
-        fn block_len(mut self, block_len: usize) -> Self {
-            self.block_len = block_len;
+        fn partition_len(mut self, block_len: usize) -> Self {
+            self.partition_len = block_len;
             self
         }
 
@@ -488,14 +514,14 @@ mod tests {
         }
 
         fn run(&self) {
-            let mut renderer = Renderer::builder(self.kernel_len)
-                .with_block_len(self.block_len)
+            let mut renderer = Renderer::builder(self.filter_len)
+                .with_partition_len(self.partition_len)
                 .build()
                 .expect("renderer");
 
             let input = (1..=self.input_len).map(|v| v as f32).collect::<Vec<_>>();
 
-            let h = (1..=self.kernel_len)
+            let h = (1..=self.filter_len)
                 .map(|v| v as f32)
                 .collect::<Vec<_>>()
                 .into_boxed_slice();
@@ -510,7 +536,7 @@ mod tests {
                 rdelay: 0.0,
             };
 
-            renderer.update_filter(&filt).expect("filter updated");
+            renderer.set_filter(&filt).expect("filter updated");
 
             renderer
                 .process_block(&input, &mut left, &mut right)
@@ -536,45 +562,45 @@ mod tests {
     #[test]
     fn conv_long_kernel() {
         ConvTest::default()
-            .kernel_len(4096)
-            .block_len(64)
+            .filter_len(4096)
             .input_len(256)
+            .partition_len(64)
             .run();
     }
 
     #[test]
     fn conv_short_kernel() {
         ConvTest::default()
-            .kernel_len(16)
-            .block_len(4)
+            .filter_len(16)
             .input_len(256)
+            .partition_len(4)
             .run();
     }
 
     #[test]
     fn conv_kernel_and_block_same_length() {
         ConvTest::default()
-            .kernel_len(16)
-            .block_len(16)
+            .filter_len(16)
             .input_len(96)
+            .partition_len(16)
             .run();
     }
 
     #[test]
     fn conv_odd_kernel() {
         ConvTest::default()
-            .kernel_len(1025)
-            .block_len(16)
+            .filter_len(1025)
             .input_len(256)
+            .partition_len(16)
             .run();
     }
 
     #[test]
     fn conv_even_kernel() {
         ConvTest::default()
-            .kernel_len(100)
-            .block_len(32)
+            .filter_len(100)
             .input_len(32)
+            .partition_len(32)
             .run();
     }
 

@@ -1,7 +1,5 @@
 use criterion::{criterion_group, criterion_main, Bencher, BenchmarkId, Criterion};
-
-use sofar::Filter;
-use sofar_dsp::Renderer;
+use sofar::{reader::Filter, render::Renderer};
 
 use rand::Rng;
 
@@ -18,11 +16,11 @@ fn bench_renderer(b: &mut Bencher, blocks: usize, block_len: usize, filt_len: us
     rand::thread_rng().fill(input.as_mut_slice());
 
     let mut renderer = Renderer::builder(filt_len)
-        .with_block_len(block_len)
+        .with_partition_len(block_len)
         .build()
         .unwrap();
 
-    renderer.update_filter(&filt).unwrap();
+    renderer.set_filter(&filt).unwrap();
 
     b.iter(|| renderer.process_block(&input, &mut left, &mut right));
 }

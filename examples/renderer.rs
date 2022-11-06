@@ -4,8 +4,8 @@ use cpal::{BufferSize, StreamConfig};
 use anyhow::{bail, Context, Error};
 use hound::WavReader;
 
-use sofar::{Filter, OpenOptions, Sofar};
-use sofar_dsp::Renderer;
+use sofar::reader::{Filter, OpenOptions, Sofar};
+use sofar::render::Renderer;
 
 use ringbuf::HeapRb;
 
@@ -80,7 +80,7 @@ where
 
     let render = Renderer::builder(filt_len)
         .with_sample_rate(sample_rate)
-        .with_block_len(64)
+        .with_partition_len(64)
         .build()
         .unwrap();
 
@@ -155,7 +155,7 @@ where
             println!("Pos: x: {x}, y: {y}");
 
             sofa.filter(x, y, z, &mut filter);
-            render_clone.lock().unwrap().update_filter(&filter).unwrap();
+            render_clone.lock().unwrap().set_filter(&filter).unwrap();
 
             thread::sleep(time::Duration::from_millis(50));
         }

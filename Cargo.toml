@@ -1,14 +1,41 @@
+[package]
+name = "sofar"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+authors = ["Tomasz Andrzejak <andreiltd@gmail.com>"]
+keywords = ["libmysofa", "hrtf", "aes69"]
+description = "Rust bindings for the libmysofa library"
+repository = "https://github.com/andreiltd/sofar"
+homepage = "https://github.com/andreiltd/sofar"
+categories = ["audio", "filesystem"]
+
+[features]
+default = ["dsp"]
+dsp = ["dep:realfft"]
+
 [workspace]
+members = ["libmysofa-sys"]
 
-members = [
-    "sofar-core",
-    "sofar-dsp",
-    "libmysofa-sys",
-    "examples/*",
-]
+[dependencies]
+ffi = { package = "libmysofa-sys", version = "*", path = "libmysofa-sys" }
+realfft = {version = "3.0", optional = true}
+thiserror = "1"
 
-default-members = [
-    "sofar-core",
-    "sofar-dsp",
-    "libmysofa-sys",
-]
+[dev-dependencies]
+anyhow = "1.0"
+assert_approx_eq = "1.1"
+hound = "3.5"
+cpal = "0.14"
+criterion = "0.4"
+rand = "0.8"
+ringbuf = "0.3"
+
+[[bench]]
+name = "renderer"
+harness = false
+required-features = ["dsp"]
+
+[[example]]
+name = "renderer"
+required-features = ["dsp"]
