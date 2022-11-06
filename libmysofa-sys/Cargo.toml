@@ -6,6 +6,7 @@ links = "mysofa"
 build = "build.rs"
 description = "Low level binding for libmysofa library"
 authors = ["Tomasz Andrzejak <andreiltd@gmail.com>"]
+categories = ["external-ffi-bindings"]
 
 [dependencies]
 libz-sys = { version = "1.1", default-features = false, features = ["static", "libc"] }
