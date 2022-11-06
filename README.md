@@ -1,4 +1,13 @@
+<div align="center">
+
+<img src="docs/homer-sofar.png"/>
+
 # Sofar
+Sofa Reader and Renderer
+
+</div>
+
+## Features
 This crate provides high level bindings to [`libmysofa`] API allows to read
 `HRTF` filters from `SOFA` files (Spatially Oriented Format for Acoustics).
 
@@ -8,7 +17,7 @@ for rendering HRTF filters.
 [`libmysofa`]: https://github.com/hoene/libmysofa
 [`render`]: `crate::render`
 
-# Example
+## Example
 
 ```rust
 
