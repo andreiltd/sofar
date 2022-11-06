@@ -19,7 +19,7 @@ dsp = ["dep:realfft"]
 members = ["libmysofa-sys"]
 
 [dependencies]
-ffi = { package = "libmysofa-sys", version = "*", path = "libmysofa-sys" }
+ffi = { package = "libmysofa-sys", version = "0.1", path = "libmysofa-sys" }
 realfft = {version = "3.0", optional = true}
 thiserror = "1"
 
