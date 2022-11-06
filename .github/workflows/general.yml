@@ -10,6 +10,9 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
+      - name: Install alsa dev
+        run: sudo apt-get install -y libasound2-dev
+
       - uses: actions/checkout@v2
         with:
           submodules: true
@@ -21,9 +24,6 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: test
-
-      - name: Install alsa dev
-        run: sudo apt-get install -y libasound2-dev
 
   fmt:
     name: Rustfmt
@@ -68,6 +68,9 @@ jobs:
         with:
           submodules: true
 
+      - name: Install alsa dev
+        run: sudo apt-get install -y libasound2-dev
+
       - name: Install stable toolchain
         uses: actions-rs/toolchain@v1
         with:
@@ -78,6 +81,3 @@ jobs:
         uses: actions-rs/tarpaulin@v0.1
         with:
           args: '--ignore-tests'
-
-      - name: Install alsa dev
-        run: sudo apt-get install -y libasound2-dev
