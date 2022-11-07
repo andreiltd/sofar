@@ -322,6 +322,5 @@ fn cstr(path: &Path) -> std::io::Result<CString> {
 
 #[cfg(windows)]
 fn cstr(path: &Path) -> std::io::Result<CString> {
-    use std::os::windows::ffi::OsStrExt;
-    Ok(CString::new(path.as_os_str().as_bytes())?)
+    Ok(CString::new(path.as_os_str().to_str().unwrap().as_bytes())?)
 }

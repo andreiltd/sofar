@@ -11,12 +11,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macOS-latest]
+        os: [ubuntu-latest, windows-latest, macOS-latest]
         rust: [stable, beta]
+        include:
+          - os: windows-latest
+            toolchain: -gnu
+
     steps:
     - uses: hecrj/setup-rust-action@v1
       with:
-        rust-version: ${{ matrix.rust }}
+        rust-version: ${{ matrix.rust }}${{ matrix.toolchain }}
     - uses: actions/checkout@v2
       with:
         submodules: true

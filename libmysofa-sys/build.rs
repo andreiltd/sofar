@@ -17,7 +17,7 @@ fn main() {
     let dst = config
         .define("BUILD_TESTS", "OFF")
         .define("BUILD_STATIC_LIBS", "ON")
-        .define("BUILD_SHARED_LIBS", "ON")
+        .define("BUILD_SHARED_LIBS", "OFF")
         .define("CODE_COVERAGE", "OFF")
         .define("ADDRESS_SANITIZE", "OFF")
         .define("ZLIB_ROOT", z_root)
