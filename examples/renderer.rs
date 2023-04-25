@@ -67,9 +67,7 @@ pub fn run<R>(
 where
     R: Read + Send + 'static,
 {
-    let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
     let sample_rate = config.sample_rate.0 as f32;
-
     let filt_len = sofa.filter_len();
 
     let mut filter = Filter::new(filt_len);
@@ -137,7 +135,8 @@ where
                 dst[1] = consumer.pop().unwrap();
             }
         },
-        err_fn,
+        |err| eprintln!("An error occurred on stream: {}", err),
+        None,
     )?;
 
     stream.play()?;
