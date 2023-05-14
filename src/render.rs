@@ -11,6 +11,7 @@ use std::sync::Arc;
 use crate::reader::Filter;
 
 use realfft::num_complex::Complex;
+use realfft::num_traits::Zero;
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 
 const DEFAULT_SAMPLE_RATE: f32 = 48000.0;
@@ -77,6 +78,10 @@ impl Delay {
             *sample = self.next(*sample);
         }
     }
+
+    fn reset(&mut self) {
+        self.buf.fill(0.0);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -136,6 +141,15 @@ impl Channel {
                 delay.set_delay(new_delay)
             }
         }
+    }
+
+    fn reset(&mut self) {
+        if let Some(delay) = self.delay.as_mut() {
+            delay.reset();
+        }
+
+        self.x_tdl.fill(0.0);
+        self.x_fdl.fill(Complex::zero());
     }
 }
 
@@ -325,6 +339,12 @@ impl Renderer {
         self.right.delay(right.as_mut());
 
         Ok(())
+    }
+
+    /// Reset all internals buffers
+    pub fn reset(&mut self) {
+        self.left.reset();
+        self.right.reset();
     }
 }
 
