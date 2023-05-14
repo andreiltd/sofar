@@ -28,6 +28,7 @@ pub enum Error {
     InternalProcessingError(#[from] realfft::FftError),
 }
 
+#[derive(Clone, Debug)]
 struct Delay {
     buf: Vec<f32>,
     delay: usize,
@@ -78,6 +79,7 @@ impl Delay {
     }
 }
 
+#[derive(Clone, Debug)]
 struct Channel {
     /// impulse response split into partition blocks
     h: Box<[Complex<f32>]>,
@@ -244,6 +246,7 @@ impl RendererBuilder {
     }
 }
 
+#[derive(Clone)]
 pub struct Renderer {
     /// common state
     state: State,
@@ -325,6 +328,7 @@ impl Renderer {
     }
 }
 
+#[derive(Clone)]
 struct State {
     /// Sample rate
     sample_rate: f32,
