@@ -7,7 +7,7 @@ use hound::WavReader;
 use sofar::reader::{Filter, OpenOptions, Sofar};
 use sofar::render::Renderer;
 
-use ringbuf::HeapRb;
+use ringbuf::{traits::*, HeapRb};
 
 use std::sync::{Arc, Condvar, Mutex};
 use std::{env, io::Read};
@@ -92,7 +92,7 @@ where
     let (mut producer, mut consumer) = ringbuf.split();
 
     for _ in 0..BLOCK_LEN {
-        producer.push(0.0).unwrap();
+        producer.try_push(0.0).unwrap();
     }
 
     let stream = device.build_output_stream(
@@ -111,7 +111,7 @@ where
                 return;
             }
 
-            while data_samples >= consumer.len() {
+            while data_samples >= consumer.occupied_len() {
                 let src = reader
                     .samples::<f32>()
                     .take(BLOCK_LEN)
@@ -125,14 +125,14 @@ where
                     .unwrap();
 
                 for (l, r) in Iterator::zip(left.iter(), right.iter()) {
-                    producer.push(*l).unwrap();
-                    producer.push(*r).unwrap();
+                    producer.try_push(*l).unwrap();
+                    producer.try_push(*r).unwrap();
                 }
             }
 
             for dst in data.chunks_exact_mut(2) {
-                dst[0] = consumer.pop().unwrap();
-                dst[1] = consumer.pop().unwrap();
+                dst[0] = consumer.try_pop().unwrap();
+                dst[1] = consumer.try_pop().unwrap();
             }
         },
         |err| eprintln!("An error occurred on stream: {}", err),

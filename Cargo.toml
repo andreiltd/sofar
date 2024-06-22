@@ -20,7 +20,7 @@ members = ["libmysofa-sys"]
 
 [dependencies]
 ffi = { package = "libmysofa-sys", version = "0.1", path = "libmysofa-sys" }
-realfft = {version = "3.2", optional = true}
+realfft = {version = "3.3", optional = true}
 thiserror = "1"
 
 [dev-dependencies]
@@ -28,9 +28,9 @@ anyhow = "1.0"
 assert_approx_eq = "1.1"
 hound = "3.5"
 cpal = "0.15"
-criterion = "0.4"
+criterion = "0.5"
 rand = "0.8"
-ringbuf = "0.3"
+ringbuf = "0.4"
 
 [[bench]]
 name = "renderer"
