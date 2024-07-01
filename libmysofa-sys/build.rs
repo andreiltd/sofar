@@ -15,7 +15,7 @@ pub fn build_from_src(lib: &str, version: &str) -> Result<Library, BuildInternal
         .flag_if_supported("-Wno-unused-but-set-variable")
         .include(z_inc)
         .include("libmysofa/src/hrtf")
-        .include("src")
+        .include("c")
         .file("libmysofa/src/hrtf/cache.c")
         .file("libmysofa/src/hdf/gunzip.c")
         .file("libmysofa/src/hdf/gcol.c")
