@@ -2,7 +2,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use std::os::raw::{c_char, c_int, c_short, c_uint, c_ulong, c_void};
+use std::os::raw::{c_char, c_int, c_long, c_short, c_uint, c_ulong, c_void};
 
 pub const MYSOFA_DEFAULT_NEIGH_STEP_ANGLE: f64 = 0.5;
 pub const MYSOFA_DEFAULT_NEIGH_STEP_RADIUS: f64 = 0.01;
@@ -165,6 +165,33 @@ extern "C" {
 
     pub fn mysofa_open_advanced(
         filename: *const c_char,
+        samplerate: f32,
+        filterlength: *mut c_int,
+        err: *mut c_int,
+        norm: bool,
+        neighbor_angle_step: f32,
+        neighbor_radius_step: f32,
+    ) -> *mut MYSOFA_EASY;
+
+    pub fn mysofa_open_data(
+        data: *const c_char,
+        size: c_long,
+        samplerate: f32,
+        filterlength: *mut c_int,
+        err: *mut c_int,
+    ) -> *mut MYSOFA_EASY;
+
+    pub fn mysofa_open_data_no_norm(
+        data: *const c_char,
+        size: c_long,
+        samplerate: f32,
+        filterlength: *mut c_int,
+        err: *mut c_int,
+    ) -> *mut MYSOFA_EASY;
+
+    pub fn mysofa_open_data_advanced(
+        data: *const c_char,
+        size: c_long,
         samplerate: f32,
         filterlength: *mut c_int,
         err: *mut c_int,

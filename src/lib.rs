@@ -68,4 +68,17 @@ mod tests {
         let mut filter = Filter::new(filt_len);
         sofa.filter(0.0, 1.0, 0.0, &mut filter);
     }
+
+    #[test]
+    fn open_data_test() {
+        let cwd = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        std::env::set_current_dir(cwd).unwrap();
+
+        let data = std::fs::read("libmysofa-sys/libmysofa/tests/tester.sofa").unwrap();
+        let sofa = Sofar::open_data(&data).unwrap();
+        let filt_len = sofa.filter_len();
+
+        let mut filter = Filter::new(filt_len);
+        sofa.filter(0.0, 1.0, 0.0, &mut filter);
+    }
 }
