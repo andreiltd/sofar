@@ -173,6 +173,47 @@ impl OpenOptions {
             cached: self.cached,
         })
     }
+
+    /// Open a SOFA using provided bytes and open options specified in `self`
+    ///
+    /// ```no_run
+    /// use sofar::reader::OpenOptions;
+    ///
+    /// let data: Vec<u8> = std::fs::read("my/sofa/file.sofa").unwrap();
+    ///
+    /// let sofa = OpenOptions::new()
+    ///     .normalized(false)
+    ///     .sample_rate(44100.0)
+    ///     .open_data(&data)
+    ///     .unwrap();
+    /// ```
+    pub fn open_data<B: AsRef<[u8]>>(&self, bytes: B) -> Result<Sofar, Error> {
+        let mut filter_len = 0;
+        let mut err = 0;
+
+        let raw = unsafe {
+            ffi::mysofa_open_data_advanced(
+                bytes.as_ref().as_ptr() as _,
+                bytes.as_ref().len() as _,
+                self.sample_rate,
+                &mut filter_len,
+                &mut err,
+                self.normalized,
+                self.neighbor_angle_step,
+                self.neighbor_radius_step,
+            )
+        };
+
+        if raw.is_null() || err != ffi::MYSOFA_OK {
+            return Err(Error::from_raw(err));
+        }
+
+        Ok(Sofar {
+            raw,
+            filter_len: filter_len as usize,
+            cached: false,
+        })
+    }
 }
 
 impl Default for OpenOptions {
@@ -225,6 +266,18 @@ impl Sofar {
     /// ```
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Sofar, Error> {
         OpenOptions::new().open(path)
+    }
+
+    /// Open a SOFA using provided bytes and the default open options
+    ///
+    /// ```no_run
+    /// use sofar::reader::Sofar;
+    ///
+    /// let data: Vec<u8> = std::fs::read("my/sofa/file.sofa").unwrap();
+    /// let sofa = Sofar::open_data(&data).unwrap();
+    /// ```
+    pub fn open_data<B: AsRef<[u8]>>(bytes: B) -> Result<Sofar, Error> {
+        OpenOptions::new().open_data(bytes)
     }
 
     pub fn filter_len(&self) -> usize {
