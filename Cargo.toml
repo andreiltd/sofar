@@ -1,6 +1,6 @@
 [package]
 name = "sofar"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
@@ -20,7 +20,7 @@ members = ["libmysofa-sys"]
 
 [dependencies]
 ffi = { package = "libmysofa-sys", version = "0.2", path = "libmysofa-sys" }
-realfft = {version = "3.3", optional = true}
+realfft = {version = "3.4", optional = true}
 thiserror = "1"
 
 [dev-dependencies]
