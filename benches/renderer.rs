@@ -1,19 +1,19 @@
-use criterion::{criterion_group, criterion_main, Bencher, BenchmarkId, Criterion};
-use sofar::{reader::Filter, render::Renderer};
+use criterion::{Bencher, BenchmarkId, Criterion, criterion_group, criterion_main};
+use sofar::{filter::Filter, render::Renderer};
 
 use rand::Rng;
 
 fn bench_renderer(b: &mut Bencher, blocks: usize, block_len: usize, filt_len: usize) {
     let mut filt = Filter::new(filt_len);
 
-    rand::thread_rng().fill(&mut *filt.left);
-    rand::thread_rng().fill(&mut *filt.right);
+    rand::rng().fill(&mut *filt.left);
+    rand::rng().fill(&mut *filt.right);
 
     let mut input = vec![0.0; blocks * block_len];
     let mut left = vec![0.0; blocks * block_len];
     let mut right = vec![0.0; blocks * block_len];
 
-    rand::thread_rng().fill(input.as_mut_slice());
+    rand::rng().fill(input.as_mut_slice());
 
     let mut renderer = Renderer::builder(filt_len)
         .with_partition_len(block_len)

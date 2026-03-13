@@ -1,87 +1,98 @@
-//! This module provides high level bindings to [`libmysofa`] API allows to read
-//! `HRTF` filters from `SOFA` files (Spatially Oriented Format for Acoustics).
+//! SOFA file reader for HRTF data.
 //!
-//! [`libmysofa`]: https://github.com/hoene/libmysofa
+//! This module provides the primary API for reading `HRTF` filters from
+//! `SOFA` files (Spatially Oriented Format for Acoustics).
+//!
+//! # Examples
+//!
+//! Open a SOFA file with default options:
+//!
+//! ```no_run
+//! use sofar::reader::Sofar;
+//! use sofar::reader::Filter;
+//!
+//! let sofa = Sofar::open("path/to/file.sofa").unwrap();
+//! let filt_len = sofa.filter_len();
+//!
+//! let mut filter = Filter::new(filt_len);
+//! sofa.filter(0.0, 1.0, 0.0, &mut filter);
+//! ```
+//!
+//! Open with custom options:
+//!
+//! ```no_run
+//! use sofar::reader::OpenOptions;
+//!
+//! let sofa = OpenOptions::new()
+//!     .sample_rate(44100.0)
+//!     .open("path/to/file.sofa")
+//!     .unwrap();
+//! ```
+//!
+//! Open from in-memory bytes:
+//!
+//! ```no_run
+//! use sofar::reader::Sofar;
+//!
+//! let data = std::fs::read("path/to/file.sofa").unwrap();
+//! let sofa = Sofar::open_data(&data).unwrap();
+//! ```
 
-use std::{ffi::CString, io, path::Path};
+use std::path::Path;
 
-const DEFAULT_CACHED: bool = false;
+use crate::sofa::{
+    Hrtf, InterpolatedFilter, Lookup, Neighborhood, get_filter_nointerp, interpolate, normalize,
+    resample, validate,
+};
+
 const DEFAULT_NORMALIZED: bool = true;
-
 const DEFAULT_SAMPLE_RATE: f32 = 48000.0;
-
-const DEFAULT_NEIGHBOR_ANGLE_STEP: f32 = ffi::MYSOFA_DEFAULT_NEIGH_STEP_ANGLE as f32;
-const DEFAULT_NEIGHBOR_RADIUS_STEP: f32 = ffi::MYSOFA_DEFAULT_NEIGH_STEP_RADIUS as f32;
+const DEFAULT_NEIGHBOR_ANGLE_STEP: f32 = 0.5;
+const DEFAULT_NEIGHBOR_RADIUS_STEP: f32 = 0.01;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("IO error")]
+    #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("The owls are not what they seem")]
-    InternalError,
-    #[error("Invalid data format")]
+    #[error("Parse error: {0}")]
+    Parse(#[from] crate::sofa::Error),
+    #[error("Invalid format")]
     InvalidFormat,
-    #[error("Format is not supported")]
-    UnsupportedFormat,
-    #[error("Invalid attributes")]
-    InvalidAttributes,
-    #[error("Invalid dimensions")]
-    InvalidDimensions,
-    #[error("Invalid dimension list")]
-    InvalidDimensionList,
-    #[error("Invalid coordinate type")]
-    InvalidCoordinateType,
-    #[error("Invalid receiver position")]
-    InvalidReceiverPositions,
-    #[error("Emitters without ECI are not supported")]
-    OnlyEmitterWithEciSupported,
-    #[error("Delays without IR or MR are not supported")]
-    OnlyDelaysWithIrOrMrSupported,
-    #[error("Sources without MC are not supported")]
-    OnlySourcesWithMcSupported,
-    #[error("Sampling rates differ")]
-    OnlyTheSameSamplingRateSupported,
+    #[error("Failed to build spatial lookup")]
+    LookupBuildFailed,
+    #[error("Resampling failed: {0}")]
+    ResampleFailed(String),
 }
 
-impl Error {
-    pub(crate) fn from_raw(err: i32) -> Error {
-        use Error::*;
-
-        match err {
-            ffi::MYSOFA_INVALID_FORMAT => InvalidFormat,
-            ffi::MYSOFA_UNSUPPORTED_FORMAT => UnsupportedFormat,
-            ffi::MYSOFA_INVALID_ATTRIBUTES => InvalidAttributes,
-            ffi::MYSOFA_INVALID_DIMENSIONS => InvalidDimensions,
-            ffi::MYSOFA_INVALID_DIMENSION_LIST => InvalidDimensionList,
-            ffi::MYSOFA_INVALID_COORDINATE_TYPE => InvalidCoordinateType,
-            ffi::MYSOFA_INVALID_RECEIVER_POSITIONS => InvalidReceiverPositions,
-            ffi::MYSOFA_ONLY_EMITTER_WITH_ECI_SUPPORTED => OnlyEmitterWithEciSupported,
-            ffi::MYSOFA_ONLY_DELAYS_WITH_IR_OR_MR_SUPPORTED => OnlyDelaysWithIrOrMrSupported,
-            ffi::MYSOFA_ONLY_SOURCES_WITH_MC_SUPPORTED => OnlySourcesWithMcSupported,
-            ffi::MYSOFA_ONLY_THE_SAME_SAMPLING_RATE_SUPPORTED => OnlyTheSameSamplingRateSupported,
-            ffi::MYSOFA_READ_ERROR => Io(io::Error::new(
-                io::ErrorKind::NotFound,
-                "Unable to read from file",
-            )),
-            ffi::MYSOFA_NO_MEMORY => Io(io::Error::new(
-                io::ErrorKind::OutOfMemory,
-                "Ran out of memory",
-            )),
-            _ => Error::InternalError,
-        }
-    }
-}
-
+/// Options for opening SOFA files.
 #[derive(Clone, Debug)]
 pub struct OpenOptions {
     sample_rate: f32,
     neighbor_angle_step: f32,
     neighbor_radius_step: f32,
-    cached: bool,
     normalized: bool,
 }
 
 impl OpenOptions {
+    /// Create a new set of open options with defaults.
+    ///
+    /// Default values:
+    /// - `sample_rate`: 48000.0
+    /// - `neighbor_angle_step`: 0.5°
+    /// - `neighbor_radius_step`: 0.01m
+    /// - `normalized`: true
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use sofar::reader::OpenOptions;
+    ///
+    /// let sofa = OpenOptions::new()
+    ///     .sample_rate(44100.0)
+    ///     .normalized(true)
+    ///     .open("path/to/file.sofa")
+    ///     .unwrap();
+    /// ```
     pub fn new() -> Self {
         Default::default()
     }
@@ -95,29 +106,14 @@ impl OpenOptions {
     }
 
     /// Neighbor search angle step measured in degrees. Default value is 0.5.
-    ///
-    /// The higher the value the faster search algorithm. The tradeoff
-    /// is accuracy: higher values will more likely miss a true nearest
-    /// neighbors.
     pub fn neighbor_angle_step(&mut self, neighbor_angle_step: f32) -> &mut Self {
         self.neighbor_angle_step = neighbor_angle_step;
         self
     }
 
     /// Neighbor search radius step measured in meters. Default value is 0.01.
-    ///
-    /// The higher the value the faster search algorithm. The tradeoff
-    /// is accuracy: higher values will more likely miss a true nearest
-    /// neighbors.
     pub fn neighbor_radius_step(&mut self, neighbor_radius_step: f32) -> &mut Self {
         self.neighbor_radius_step = neighbor_radius_step;
-        self
-    }
-
-    /// Using this option tells library to share memory for the files with the
-    /// same name and sampling rate.
-    pub fn cached(&mut self, cached: bool) -> &mut Self {
-        self.cached = cached;
         self
     }
 
@@ -127,91 +123,76 @@ impl OpenOptions {
         self
     }
 
-    /// Open a SOFA file at `path` with open options specified in `self`
+    /// Open a SOFA file at `path` with open options specified in `self`.
+    ///
+    /// # Example
     ///
     /// ```no_run
     /// use sofar::reader::OpenOptions;
     ///
     /// let sofa = OpenOptions::new()
-    ///     .normalized(false)
     ///     .sample_rate(44100.0)
-    ///     .open("my/sofa/file.sofa")
+    ///     .open("path/to/file.sofa")
     ///     .unwrap();
     /// ```
     pub fn open<P: AsRef<Path>>(&self, path: P) -> Result<Sofar, Error> {
-        let path = cstr(path.as_ref())?;
-        let mut filter_len = 0;
-        let mut err = 0;
-
-        let raw = unsafe {
-            match self.cached {
-                true => ffi::mysofa_open_cached(
-                    path.as_ptr(),
-                    self.sample_rate,
-                    &mut filter_len,
-                    &mut err,
-                ),
-                false => ffi::mysofa_open_advanced(
-                    path.as_ptr(),
-                    self.sample_rate,
-                    &mut filter_len,
-                    &mut err,
-                    self.normalized,
-                    self.neighbor_angle_step,
-                    self.neighbor_radius_step,
-                ),
-            }
-        };
-
-        if raw.is_null() || err != ffi::MYSOFA_OK {
-            return Err(Error::from_raw(err));
-        }
-
-        Ok(Sofar {
-            raw,
-            filter_len: filter_len as usize,
-            cached: self.cached,
-        })
+        let data = std::fs::read(path)?;
+        self.open_data(&data)
     }
 
-    /// Open a SOFA using provided bytes and open options specified in `self`
+    /// Open a SOFA file from in-memory bytes with open options specified in `self`.
+    ///
+    /// # Example
     ///
     /// ```no_run
     /// use sofar::reader::OpenOptions;
     ///
-    /// let data: Vec<u8> = std::fs::read("my/sofa/file.sofa").unwrap();
-    ///
+    /// let data = std::fs::read("path/to/file.sofa").unwrap();
     /// let sofa = OpenOptions::new()
-    ///     .normalized(false)
-    ///     .sample_rate(44100.0)
     ///     .open_data(&data)
     ///     .unwrap();
     /// ```
     pub fn open_data<B: AsRef<[u8]>>(&self, bytes: B) -> Result<Sofar, Error> {
-        let mut filter_len = 0;
-        let mut err = 0;
+        let mut hrtf = Hrtf::from_bytes(bytes.as_ref())?;
 
-        let raw = unsafe {
-            ffi::mysofa_open_data_advanced(
-                bytes.as_ref().as_ptr() as _,
-                bytes.as_ref().len() as _,
-                self.sample_rate,
-                &mut filter_len,
-                &mut err,
-                self.normalized,
-                self.neighbor_angle_step,
-                self.neighbor_radius_step,
-            )
-        };
+        // Convert all position arrays to cartesian coordinates.
+        // SOFA files may store positions in spherical coordinates.
+        hrtf.convert_to_cartesian();
 
-        if raw.is_null() || err != ffi::MYSOFA_OK {
-            return Err(Error::from_raw(err));
+        // Validate (log warnings but don't fail)
+        if let Err(e) = validate(&hrtf) {
+            log::warn!("SOFA validation: {}", e);
         }
 
+        // Resample if needed
+        let original_rate = hrtf.sample_rate();
+        if (original_rate - self.sample_rate).abs() > 0.1 {
+            resample(&mut hrtf, self.sample_rate).map_err(Error::ResampleFailed)?;
+        }
+
+        // Normalize if requested
+        if self.normalized {
+            let _ = normalize(&mut hrtf);
+        }
+
+        // Build spatial lookup
+        let lookup = Lookup::new(&hrtf).ok_or(Error::LookupBuildFailed)?;
+
+        // Build neighborhood for interpolation
+        let neighborhood = Neighborhood::new(
+            &hrtf,
+            &lookup,
+            self.neighbor_angle_step,
+            self.neighbor_radius_step,
+        );
+
+        let filter_len = hrtf.filter_len();
+
         Ok(Sofar {
-            raw,
-            filter_len: filter_len as usize,
-            cached: false,
+            hrtf,
+            lookup,
+            neighborhood,
+            filter_len,
         })
     }
 }
@@ -222,158 +203,158 @@ impl Default for OpenOptions {
             sample_rate: DEFAULT_SAMPLE_RATE,
             neighbor_angle_step: DEFAULT_NEIGHBOR_ANGLE_STEP,
             neighbor_radius_step: DEFAULT_NEIGHBOR_RADIUS_STEP,
-            cached: DEFAULT_CACHED,
             normalized: DEFAULT_NORMALIZED,
         }
     }
 }
 
-pub struct Filter {
-    /// Impulse Response of FIR filter for left channel
-    pub left: Box<[f32]>,
-    /// Impulse Response of FIR filter for right channel
-    pub right: Box<[f32]>,
-    /// The amount of time in seconds that left channel should be delayed for
-    pub ldelay: f32,
-    /// The amount of time in seconds that right channel should be delayed for
-    pub rdelay: f32,
-}
+pub use crate::filter::Filter;
 
-impl Filter {
-    pub fn new(filt_len: usize) -> Self {
-        Self {
-            left: vec![0.0; filt_len].into_boxed_slice(),
-            right: vec![0.0; filt_len].into_boxed_slice(),
-            ldelay: 0.0,
-            rdelay: 0.0,
-        }
-    }
-}
-
+/// SOFA reader providing access to HRTF filter data.
+///
+/// Wraps parsed HRTF data with spatial lookup and neighbor interpolation.
+/// Use [`OpenOptions`] for fine-grained control, or the convenience methods
+/// [`Sofar::open`] and [`Sofar::open_data`].
 pub struct Sofar {
-    raw: *mut ffi::MYSOFA_EASY,
+    hrtf: Hrtf,
+    lookup: Lookup,
+    neighborhood: Neighborhood,
     filter_len: usize,
-    cached: bool,
 }
 
 impl Sofar {
-    /// Open a SOFA file with the default open options
+    /// Open a SOFA file with the default open options.
+    ///
+    /// # Example
     ///
     /// ```no_run
     /// use sofar::reader::Sofar;
     ///
-    /// let sofa = Sofar::open("my/sofa/file.sofa").unwrap();
+    /// let sofa = Sofar::open("path/to/file.sofa").unwrap();
+    /// println!("Filter length: {}", sofa.filter_len());
     /// ```
-    pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Sofar, Error> {
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Sofar, Error> {
         OpenOptions::new().open(path)
     }
 
-    /// Open a SOFA using provided bytes and the default open options
+    /// Open a SOFA file from in-memory bytes with the default open options.
+    ///
+    /// # Example
     ///
     /// ```no_run
     /// use sofar::reader::Sofar;
     ///
-    /// let data: Vec<u8> = std::fs::read("my/sofa/file.sofa").unwrap();
+    /// let data = std::fs::read("path/to/file.sofa").unwrap();
     /// let sofa = Sofar::open_data(&data).unwrap();
     /// ```
     pub fn open_data<B: AsRef<[u8]>>(bytes: B) -> Result<Sofar, Error> {
         OpenOptions::new().open_data(bytes)
     }
 
+    /// Get the filter length (number of IR taps per channel).
     pub fn filter_len(&self) -> usize {
         self.filter_len
     }
 
-    /// Get HRTF filter for a given position
+    /// Get the HRTF filter for a given cartesian position using interpolation.
     ///
-    /// To produce a stereo output for a given position a source should be
-    /// delayed by left and right delay and FIR filtered by left and right
-    /// impulse response.
+    /// Uses inverse distance weighting to combine the nearest measurement with
+    /// up to 6 directional neighbors for smooth spatial transitions.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` - Forward/backward position in meters
+    /// * `y` - Left/right position in meters
+    /// * `z` - Up/down position in meters
+    /// * `filter` - Output filter to fill with interpolated IR data
+    ///
+    /// # Example
     ///
     /// ```no_run
     /// use sofar::reader::{Sofar, Filter};
     ///
-    /// let sofa = Sofar::open("my/sofa/file.sofa").unwrap();
-    /// let filt_len = sofa.filter_len();
+    /// let sofa = Sofar::open("path/to/file.sofa").unwrap();
+    /// let mut filter = Filter::new(sofa.filter_len());
     ///
-    /// let mut filter = Filter::new(filt_len);
-    ///
-    /// sofa.filter(0.0, 1.0, 0.0, &mut filter);
+    /// // Get filter for a source 1 meter in front
+    /// sofa.filter(1.0, 0.0, 0.0, &mut filter);
     /// ```
-    ///
-    /// # Panics
-    ///
-    /// This method panics if:
-    /// - `filter.left.len() < self.filter_len`
-    /// - `filter.right.len() < self.filter_len`
     pub fn filter(&self, x: f32, y: f32, z: f32, filter: &mut Filter) {
-        assert!(filter.left.len() >= self.filter_len);
-        assert!(filter.right.len() >= self.filter_len);
+        let position = [x, y, z];
 
-        unsafe {
-            ffi::mysofa_getfilter_float(
-                self.raw,
-                x,
-                y,
-                z,
-                filter.left.as_mut_ptr(),
-                filter.right.as_mut_ptr(),
-                &mut filter.ldelay,
-                &mut filter.rdelay,
-            );
+        if let Some(nearest_idx) = self.lookup.find(&position)
+            && let Some(interp) =
+                interpolate(&self.hrtf, &self.neighborhood, nearest_idx, &position)
+        {
+            self.fill_filter(filter, &interp);
+            return;
         }
+
+        // Fallback: zero filter
+        filter.left.iter_mut().for_each(|s| *s = 0.0);
+        filter.right.iter_mut().for_each(|s| *s = 0.0);
+        filter.ldelay = 0.0;
+        filter.rdelay = 0.0;
     }
 
-    /// Get HRTF filter for a given position with no interpolation
+    /// Get the HRTF filter for a given position without interpolation.
     ///
-    /// Similar to [`filter`](crate::reader::Filter) method but it will skip the linear
-    /// interpolation and return the filter for the nearest position instead.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if:
-    /// - `filter.left.len() < self.filter_len`
-    /// - `filter.right.len() < self.filter_len`
+    /// Returns the nearest measurement without blending with neighbors.
+    /// Faster than [`filter`](Sofar::filter) but may produce audible
+    /// discontinuities when the source position changes.
     pub fn filter_nointerp(&self, x: f32, y: f32, z: f32, filter: &mut Filter) {
-        assert!(filter.left.len() >= self.filter_len);
-        assert!(filter.right.len() >= self.filter_len);
+        let position = [x, y, z];
 
-        unsafe {
-            ffi::mysofa_getfilter_float_nointerp(
-                self.raw,
-                x,
-                y,
-                z,
-                filter.left.as_mut_ptr(),
-                filter.right.as_mut_ptr(),
-                &mut filter.ldelay,
-                &mut filter.rdelay,
-            );
+        if let Some(nearest_idx) = self.lookup.find(&position)
+            && let Some(interp) = get_filter_nointerp(&self.hrtf, nearest_idx)
+        {
+            self.fill_filter(filter, &interp);
+            return;
         }
-    }
-}
 
-impl Drop for Sofar {
-    fn drop(&mut self) {
-        unsafe {
-            match self.cached {
-                true => ffi::mysofa_close_cached(self.raw),
-                false => ffi::mysofa_close(self.raw),
-            }
+        // Fallback: zero filter
+        filter.left.iter_mut().for_each(|s| *s = 0.0);
+        filter.right.iter_mut().for_each(|s| *s = 0.0);
+        filter.ldelay = 0.0;
+        filter.rdelay = 0.0;
+    }
+
+    fn fill_filter(&self, filter: &mut Filter, interp: &InterpolatedFilter) {
+        let copy_len = interp.left.len().min(filter.left.len());
+        filter.left[..copy_len].copy_from_slice(&interp.left[..copy_len]);
+        if copy_len < filter.left.len() {
+            filter.left[copy_len..].iter_mut().for_each(|s| *s = 0.0);
         }
+
+        let copy_len = interp.right.len().min(filter.right.len());
+        filter.right[..copy_len].copy_from_slice(&interp.right[..copy_len]);
+        if copy_len < filter.right.len() {
+            filter.right[copy_len..].iter_mut().for_each(|s| *s = 0.0);
+        }
+
+        // Convert delay from samples to seconds
+        let sample_rate = self.hrtf.sample_rate();
+        filter.ldelay = interp.delay_left / sample_rate;
+        filter.rdelay = interp.delay_right / sample_rate;
     }
-}
 
-unsafe impl Send for Sofar {}
-unsafe impl Sync for Sofar {}
+    /// Get access to the underlying HRTF data.
+    pub fn hrtf(&self) -> &Hrtf {
+        &self.hrtf
+    }
 
-#[cfg(unix)]
-fn cstr(path: &Path) -> std::io::Result<CString> {
-    use std::os::unix::ffi::OsStrExt;
-    Ok(CString::new(path.as_os_str().as_bytes())?)
-}
+    /// Get access to the spatial lookup.
+    pub fn lookup(&self) -> &Lookup {
+        &self.lookup
+    }
 
-#[cfg(windows)]
-fn cstr(path: &Path) -> std::io::Result<CString> {
-    Ok(CString::new(path.as_os_str().to_str().unwrap().as_bytes())?)
+    /// Get the sample rate.
+    pub fn sample_rate(&self) -> f32 {
+        self.hrtf.sample_rate()
+    }
+
+    /// Get the number of measurements.
+    pub fn num_measurements(&self) -> u32 {
+        self.hrtf.m()
+    }
 }

@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use crate::reader::Filter;
+use crate::filter::Filter;
 
 use realfft::num_complex::Complex;
 use realfft::num_traits::Zero;
@@ -48,11 +48,11 @@ impl Delay {
     }
 
     fn set_delay(&mut self, delay: usize) {
-        let n = self.buf.len();
-
-        if delay >= n {
+        if delay >= self.buf.len() {
             self.buf.resize(delay + 1, 0.0)
         }
+
+        let n = self.buf.len();
 
         if self.wpos >= delay {
             self.rpos = self.wpos - delay;
@@ -88,27 +88,15 @@ impl Delay {
 struct Channel {
     /// impulse response split into partition blocks
     h: Box<[Complex<f32>]>,
-    /// input blocks frequency domain delay line
-    x_fdl: Box<[Complex<f32>]>,
-    /// input blocks time domain delay line
-    x_tdl: Box<[f32]>,
     /// left channel delay state
     delay: Option<Delay>,
 }
 
 impl Channel {
-    fn new(
-        fft_len: usize,
-        spectra_len: usize,
-        partitions: usize,
-        sample_rate: f32,
-        delay: Option<f32>,
-    ) -> Self {
+    fn new(spectra_len: usize, partitions: usize, sample_rate: f32, delay: Option<f32>) -> Self {
         let zero = Complex::new(0.0, 0.0);
 
         let h = vec![zero; spectra_len * partitions].into_boxed_slice();
-        let x_fdl = vec![zero; spectra_len * partitions].into_boxed_slice();
-        let x_tdl = vec![0.0; fft_len].into_boxed_slice();
 
         let delay = delay.and_then(|delay| {
             if delay > 0.0 {
@@ -118,12 +106,7 @@ impl Channel {
             }
         });
 
-        Channel {
-            h,
-            x_tdl,
-            x_fdl,
-            delay,
-        }
+        Channel { h, delay }
     }
 
     fn delay<O>(&mut self, mut buf: O)
@@ -136,10 +119,10 @@ impl Channel {
     }
 
     fn update_delay(&mut self, new_delay: usize) {
-        if let Some(delay) = self.delay.as_mut() {
-            if new_delay != delay.delay {
-                delay.set_delay(new_delay)
-            }
+        if let Some(delay) = self.delay.as_mut()
+            && new_delay != delay.delay
+        {
+            delay.set_delay(new_delay)
         }
     }
 
@@ -147,9 +130,6 @@ impl Channel {
         if let Some(delay) = self.delay.as_mut() {
             delay.reset();
         }
-
-        self.x_tdl.fill(0.0);
-        self.x_fdl.fill(Complex::zero());
     }
 }
 
@@ -209,7 +189,7 @@ impl RendererBuilder {
             false => return Err(Error::InvalidSampleRate(self.sample_rate)),
         };
 
-        let partitions = (self.filter_len + self.partition_len - 1) / self.partition_len;
+        let partitions = self.filter_len.div_ceil(self.partition_len);
 
         let fft_len = self.partition_len * 2;
         let spectra_len = fft_len / 2 + 1;
@@ -219,6 +199,10 @@ impl RendererBuilder {
         let filt_pad = vec![0.0; fft_len].into_boxed_slice();
         let acc = vec![zero; spectra_len].into_boxed_slice();
 
+        // Shared input state (computed once per block, used by both channels)
+        let x_tdl = vec![0.0; fft_len].into_boxed_slice();
+        let x_fdl = vec![zero; spectra_len * partitions].into_boxed_slice();
+
         let mut planner = RealFftPlanner::<f32>::new();
         let rfft = planner.plan_fft_forward(fft_len);
         let ifft = planner.plan_fft_inverse(fft_len);
@@ -226,26 +210,15 @@ impl RendererBuilder {
         let rfft_scratch = rfft.make_scratch_vec();
         let ifft_scratch = ifft.make_scratch_vec();
 
-        let left = Channel::new(
-            fft_len,
-            spectra_len,
-            partitions,
-            sample_rate,
-            self.left_delay,
-        );
-        let right = Channel::new(
-            fft_len,
-            spectra_len,
-            partitions,
-            sample_rate,
-            self.right_delay,
-        );
+        let left = Channel::new(spectra_len, partitions, sample_rate, self.left_delay);
+        let right = Channel::new(spectra_len, partitions, sample_rate, self.right_delay);
 
         let state = State {
             acc,
             rfft,
             ifft,
             fft_len,
+            inv_scale: 1.0 / fft_len as f32,
             scratch,
             filt_pad,
             rfft_scratch,
@@ -254,6 +227,9 @@ impl RendererBuilder {
             sample_rate: self.sample_rate,
             filter_len: self.filter_len,
             partition_len: self.partition_len,
+            x_tdl,
+            x_fdl,
+            fdl_head: 0,
         };
 
         Ok(Renderer { left, right, state })
@@ -330,10 +306,24 @@ impl Renderer {
             ));
         }
 
-        self.state
-            .conv(&mut self.left, input.as_ref(), left.as_mut())?;
-        self.state
-            .conv(&mut self.right, input.as_ref(), right.as_mut())?;
+        let x = input.as_ref();
+        let left_out = left.as_mut();
+        let right_out = right.as_mut();
+        let block_len = self.state.partition_len;
+
+        let mut off = 0;
+        while off < x.len() {
+            // Prepare shared input FFT (once per block, shared by both channels)
+            self.state.prepare_input(&x[off..off + block_len])?;
+
+            // Apply per-channel filter and produce output
+            self.state
+                .apply_filter(&self.left.h, &mut left_out[off..off + block_len])?;
+            self.state
+                .apply_filter(&self.right.h, &mut right_out[off..off + block_len])?;
+
+            off += block_len;
+        }
 
         self.left.delay(left.as_mut());
         self.right.delay(right.as_mut());
@@ -345,6 +335,9 @@ impl Renderer {
     pub fn reset(&mut self) {
         self.left.reset();
         self.right.reset();
+        self.state.x_tdl.fill(0.0);
+        self.state.x_fdl.fill(Complex::zero());
+        self.state.fdl_head = 0;
     }
 }
 
@@ -360,13 +353,15 @@ struct State {
     partitions: usize,
     /// FFT size
     fft_len: usize,
+    /// Precomputed 1.0 / fft_len for output scaling
+    inv_scale: f32,
     /// Real FFT module
     rfft: Arc<dyn RealToComplex<f32>>,
     /// Inverse FFT module
     ifft: Arc<dyn ComplexToReal<f32>>,
     /// RFFT scratch memory
     rfft_scratch: Vec<Complex<f32>>,
-    /// RFFT scratch memory
+    /// IFFT scratch memory
     ifft_scratch: Vec<Complex<f32>>,
     /// mutable internal scratch for fft input
     scratch: Box<[f32]>,
@@ -374,74 +369,79 @@ struct State {
     filt_pad: Box<[f32]>,
     /// accumulator for point wise multiplication
     acc: Box<[Complex<f32>]>,
+    /// shared input time-domain delay line (used by both channels)
+    x_tdl: Box<[f32]>,
+    /// shared input frequency-domain delay line (ring buffer)
+    x_fdl: Box<[Complex<f32>]>,
+    /// ring buffer head index for x_fdl (points to newest slot)
+    fdl_head: usize,
 }
 
 impl State {
-    fn conv<I, O>(&mut self, channel: &mut Channel, x: I, mut y: O) -> Result<(), Error>
-    where
-        I: AsRef<[f32]>,
-        O: AsMut<[f32]>,
-    {
-        let x = x.as_ref();
-        let y = y.as_mut();
-
+    /// Prepare the shared input block: update time-domain delay line, compute
+    /// forward FFT, and store the result in the frequency-domain ring buffer.
+    /// Called once per block (shared by both channels).
+    fn prepare_input(&mut self, block: &[f32]) -> Result<(), Error> {
         let spectra_len = self.fft_len / 2 + 1;
         let block_len = self.partition_len;
-        let scale = self.fft_len as f32;
 
-        let mut off = 0;
+        // Shift left part of TDL and store new data in right part
+        self.x_tdl.copy_within(block_len.., 0);
+        self.x_tdl[block_len..].copy_from_slice(block);
 
-        while off < x.len() {
-            // shift right part of the buffer to the left
-            channel.x_tdl.copy_within(block_len.., 0);
-            // store new data in right part
-            channel.x_tdl[block_len..].copy_from_slice(&x[off..off + block_len]);
-            // shift up the fdl content by one slot
-            channel.x_fdl.rotate_right(spectra_len);
-            // move data to processing scratch
-            self.scratch.copy_from_slice(&channel.x_tdl);
-            // take real to complex fft of input block and store it in the first fdl slot
-            self.rfft.process_with_scratch(
-                &mut self.scratch,
-                &mut channel.x_fdl[..spectra_len],
-                &mut self.rfft_scratch,
-            )?;
+        // Advance ring buffer head (wrapping)
+        if self.fdl_head == 0 {
+            self.fdl_head = self.partitions - 1;
+        } else {
+            self.fdl_head -= 1;
+        }
 
-            // point wise multiply with filter and accumulate the results
-            let mut p_off = 0;
-            self.acc.fill(Complex::new(0.0, 0.0));
+        // Copy TDL to scratch and compute forward FFT into the new head slot
+        self.scratch.copy_from_slice(&self.x_tdl);
+        let head_start = self.fdl_head * spectra_len;
+        self.rfft.process_with_scratch(
+            &mut self.scratch,
+            &mut self.x_fdl[head_start..head_start + spectra_len],
+            &mut self.rfft_scratch,
+        )?;
 
-            for _ in 0..self.partitions {
-                for (acc, (x, h)) in Iterator::zip(
-                    self.acc.iter_mut(),
-                    Iterator::zip(
-                        channel.x_fdl[p_off..p_off + spectra_len].iter(),
-                        channel.h[p_off..p_off + spectra_len].iter(),
-                    ),
-                ) {
-                    *acc += x * h;
-                }
+        Ok(())
+    }
 
-                p_off += spectra_len;
-            }
+    /// Apply a channel's filter to the shared input FDL and produce output.
+    /// Uses the ring buffer to access input spectra without physical rotation.
+    fn apply_filter(&mut self, h: &[Complex<f32>], y: &mut [f32]) -> Result<(), Error> {
+        let spectra_len = self.fft_len / 2 + 1;
+        let block_len = self.partition_len;
 
-            // take complex to real transform
-            self.ifft.process_with_scratch(
-                &mut self.acc,
-                &mut self.scratch,
-                &mut self.ifft_scratch,
-            )?;
+        // Point-wise multiply with filter and accumulate
+        self.acc.fill(Complex::new(0.0, 0.0));
 
-            // discard the left part and write the right part as the next output block
-            for (y, x) in Iterator::zip(
-                y[off..off + block_len].iter_mut(),
-                self.scratch[block_len..].iter(),
+        for p in 0..self.partitions {
+            // Map logical partition p to physical FDL slot via ring buffer
+            let fdl_idx = (self.fdl_head + p) % self.partitions;
+            let fdl_off = fdl_idx * spectra_len;
+            let h_off = p * spectra_len;
+
+            for (acc, (x, h)) in Iterator::zip(
+                self.acc.iter_mut(),
+                Iterator::zip(
+                    self.x_fdl[fdl_off..fdl_off + spectra_len].iter(),
+                    h[h_off..h_off + spectra_len].iter(),
+                ),
             ) {
-                *y = x / scale;
+                *acc += x * h;
             }
+        }
 
-            // update offset
-            off += block_len;
+        // Inverse FFT
+        self.ifft
+            .process_with_scratch(&mut self.acc, &mut self.scratch, &mut self.ifft_scratch)?;
+
+        // Write output (second half), scaling by 1/N
+        let inv_scale = self.inv_scale;
+        for (y, x) in Iterator::zip(y[..block_len].iter_mut(), self.scratch[block_len..].iter()) {
+            *y = x * inv_scale;
         }
 
         Ok(())
@@ -458,6 +458,7 @@ impl State {
 
         for partition in iter.by_ref() {
             self.filt_pad[..block_len].copy_from_slice(partition);
+            self.filt_pad[block_len..].fill(0.0);
 
             self.rfft.process_with_scratch(
                 &mut self.filt_pad,
@@ -636,8 +637,8 @@ mod tests {
 
         expected.rotate_right(42);
 
-        for i in 0..42 {
-            expected[i] = 0.0;
+        for item in expected.iter_mut().take(42) {
+            *item = 0.0;
         }
 
         delay.apply(input.as_mut_slice());

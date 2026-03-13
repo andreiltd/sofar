@@ -1,13 +1,14 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, StreamConfig};
 
-use anyhow::{bail, Context, Error};
+use anyhow::{Context, Error, bail};
+use arc_swap::ArcSwap;
 use hound::WavReader;
 
 use sofar::reader::{Filter, OpenOptions, Sofar};
 use sofar::render::Renderer;
 
-use ringbuf::{traits::*, HeapRb};
+use ringbuf::{HeapRb, traits::*};
 
 use std::sync::{Arc, Condvar, Mutex};
 use std::{env, io::Read};
@@ -35,7 +36,7 @@ fn main() -> Result<(), Error> {
         bail!("Unsupported format, must be F32, mono channel");
     }
 
-    println!("Wave file spec: {:?}", spec);
+    println!("Wave file spec: {spec:?}");
 
     let sofa = OpenOptions::new()
         .sample_rate(spec.sample_rate as f32)
@@ -46,7 +47,7 @@ fn main() -> Result<(), Error> {
     let device = host.default_output_device().unwrap();
 
     let config = device.default_output_config().unwrap();
-    println!("Default output config: {:?}", config);
+    println!("Default output config: {config:?}");
 
     let mut stream_config = StreamConfig::from(config.clone());
     stream_config.channels = 2;
@@ -67,23 +68,25 @@ pub fn run<R>(
 where
     R: Read + Send + 'static,
 {
-    let sample_rate = config.sample_rate.0 as f32;
+    let sample_rate = config.sample_rate as f32;
     let filt_len = sofa.filter_len();
 
-    let mut filter = Filter::new(filt_len);
-    sofa.filter(1.0, 0.0, 0.0, &mut filter);
+    let initial_filter = Filter::new(filt_len);
 
+    let mut input_buf = vec![0.0f32; BLOCK_LEN];
     let mut left = vec![0.0; BLOCK_LEN];
     let mut right = vec![0.0; BLOCK_LEN];
 
-    let render = Renderer::builder(filt_len)
+    let mut render = Renderer::builder(filt_len)
         .with_sample_rate(sample_rate)
         .with_partition_len(64)
         .build()
         .unwrap();
 
-    let render = Arc::new(Mutex::new(render));
-    let render_clone = render.clone();
+    render.set_filter(&initial_filter).unwrap();
+
+    let pending_filter: Arc<ArcSwap<Option<Filter>>> = Arc::new(ArcSwap::from_pointee(None));
+    let pending_clone = Arc::clone(&pending_filter);
 
     let eos = Arc::new((Mutex::new(false), Condvar::new()));
     let eos_clone = Arc::clone(&eos);
@@ -92,69 +95,82 @@ where
     let (mut producer, mut consumer) = ringbuf.split();
 
     for _ in 0..BLOCK_LEN {
-        producer.try_push(0.0).unwrap();
+        let _ = producer.try_push(0.0);
     }
 
     let stream = device.build_output_stream(
         config,
         move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            let left_samples = reader.samples::<f32>().len();
-            let data_samples = data.len();
-
-            if left_samples < BLOCK_LEN {
-                let (lock, cvar) = &*eos_clone;
-                let mut eos = lock.lock().unwrap();
-
-                *eos = true;
-                cvar.notify_one();
-
-                return;
+            let guard = pending_filter.load();
+            if let Some(new_filter) = guard.as_ref() {
+                let _ = render.set_filter(new_filter);
+                pending_filter.store(Arc::new(None));
             }
 
-            while data_samples >= consumer.occupied_len() {
-                let src = reader
-                    .samples::<f32>()
-                    .take(BLOCK_LEN)
-                    .collect::<Result<Vec<_>, _>>()
-                    .unwrap();
+            let data_samples = data.len();
 
-                render
-                    .lock()
-                    .unwrap()
-                    .process_block(src, &mut left, &mut right)
-                    .unwrap();
+            while data_samples >= consumer.occupied_len() {
+                let mut got = 0;
+                for s in reader.samples::<f32>().take(BLOCK_LEN).flatten() {
+                    input_buf[got] = s;
+                    got += 1;
+                }
+
+                if got < BLOCK_LEN {
+                    let (lock, cvar) = &*eos_clone;
+                    if let Ok(mut eos) = lock.lock() {
+                        *eos = true;
+                        cvar.notify_one();
+                    }
+                    return;
+                }
+
+                let _ = render.process_block(&input_buf, &mut left, &mut right);
 
                 for (l, r) in Iterator::zip(left.iter(), right.iter()) {
-                    producer.try_push(*l).unwrap();
-                    producer.try_push(*r).unwrap();
+                    let _ = producer.try_push(*l);
+                    let _ = producer.try_push(*r);
                 }
             }
 
             for dst in data.chunks_exact_mut(2) {
-                dst[0] = consumer.try_pop().unwrap();
-                dst[1] = consumer.try_pop().unwrap();
+                dst[0] = consumer.try_pop().unwrap_or(0.0);
+                dst[1] = consumer.try_pop().unwrap_or(0.0);
             }
         },
-        |err| eprintln!("An error occurred on stream: {}", err),
+        |err| eprintln!("An error occurred on stream: {err}"),
         None,
     )?;
 
     stream.play()?;
 
     thread::spawn(move || {
-        let mut x = 1.0;
-        let mut y = 0.0;
-        let z = 0.0;
+        let mut x: f32 = 1.0;
+        let mut y: f32 = 0.0;
+        let z: f32 = 0.0;
+
+        let cos_r = f32::cos(ROTATION);
+        let sin_r = f32::sin(ROTATION);
+
+        let mut filter = Filter::new(filt_len);
 
         loop {
-            // rotate clockwise: https://en.wikipedia.org/wiki/Rotation_matrix
-            x = x * f32::cos(ROTATION) + y * f32::sin(ROTATION);
-            y = -x * f32::sin(ROTATION) + y * f32::cos(ROTATION);
+            let new_x = x * cos_r + y * sin_r;
+            let new_y = -x * sin_r + y * cos_r;
+            x = new_x;
+            y = new_y;
 
             println!("Pos: x: {x}, y: {y}");
 
             sofa.filter(x, y, z, &mut filter);
-            render_clone.lock().unwrap().set_filter(&filter).unwrap();
+
+            let mut new_filter = Filter::new(filt_len);
+            new_filter.left.copy_from_slice(&filter.left);
+            new_filter.right.copy_from_slice(&filter.right);
+            new_filter.ldelay = filter.ldelay;
+            new_filter.rdelay = filter.rdelay;
+
+            pending_clone.store(Arc::new(Some(new_filter)));
 
             thread::sleep(time::Duration::from_millis(50));
         }
