@@ -3,16 +3,18 @@
 <img src="docs/homer-sofar.png"/>
 
 # Sofar
-Sofa Reader and Renderer
+Pure Rust SOFA Reader and HRTF Renderer
 
 </div>
 
 ## Features
-This crate provides high level bindings to [`libmysofa`] API allows to read
-`HRTF` filters from `SOFA` files (Spatially Oriented Format for Acoustics).
+A pure Rust implementation for reading `HRTF` filters from `SOFA` files
+(Spatially Oriented Format for Acoustics).
 
 The [`render`] module implements uniformly partitioned convolution algorithm
 for rendering HRTF filters.
+
+Based on the [`libmysofa`] C library by Christian Hoene / Symonics GmbH.
 
 [`libmysofa`]: https://github.com/hoene/libmysofa
 [`render`]: `crate::render`
@@ -33,7 +35,7 @@ let sofa = OpenOptions::new()
 let filt_len = sofa.filter_len();
 let mut filter = Filter::new(filt_len);
 
-// Get filter at poistion
+// Get filter at position
 sofa.filter(0.0, 1.0, 0.0, &mut filter);
 
 let mut render = Renderer::builder(filt_len)
@@ -42,7 +44,7 @@ let mut render = Renderer::builder(filt_len)
     .build()
     .unwrap();
 
-render.set_filter(&filter);
+render.set_filter(&filter).unwrap();
 
 let input = vec![0.0; 256];
 let mut left = vec![0.0; 256];
@@ -57,8 +59,17 @@ You can run `cpal` renderer example like this:
 
 ``` shell
 cargo run --example renderer -- <FILENAME-MONO.wav> libmysofa-sys/libmysofa/share/default.sofa
-
 ```
+
+## Acknowledgments
+
+This project is a Rust port of [libmysofa](https://github.com/hoene/libmysofa),
+a C library for reading SOFA files.
+
+- **libmysofa** Copyright © 2016-2017 Symonics GmbH, Christian Hoene (BSD-3-Clause)
+- **KD-tree** Copyright © 2007-2011 John Tsiombikas (BSD-3-Clause)
+
+See the [NOTICE](NOTICE) file for full attribution details.
 
 # License
 

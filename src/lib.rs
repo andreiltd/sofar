@@ -1,12 +1,14 @@
 //! # Sofar
 //!
-//! Sofa Reader and Renderer
+//! Pure Rust SOFA Reader and HRTF Renderer
 //!
-//! This crate provides high level bindings to [`libmysofa`] API allows to read
-//! `HRTF` filters from `SOFA` files (Spatially Oriented Format for Acoustics).
+//! This crate provides a pure Rust implementation for reading `HRTF` filters
+//! from `SOFA` files (Spatially Oriented Format for Acoustics).
 //!
 //! The [`render`] module implements uniformly partitioned convolution algorithm
 //! for rendering HRTF filters.
+//!
+//! Based on the [`libmysofa`] C library by Christian Hoene / Symonics GmbH.
 //!
 //! [`libmysofa`]: https://github.com/hoene/libmysofa
 //! [`render`]: `crate::render`
@@ -47,7 +49,11 @@
 //! render.process_block(&input, &mut left, &mut right).unwrap();
 //! ```
 
+pub mod filter;
+
+pub mod hdf;
 pub mod reader;
+mod sofa;
 
 #[cfg(feature = "dsp")]
 pub mod render;
@@ -80,5 +86,23 @@ mod tests {
 
         let mut filter = Filter::new(filt_len);
         sofa.filter(0.0, 1.0, 0.0, &mut filter);
+    }
+
+    #[test]
+    fn debug_tu_berlin() {
+        let cwd = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        std::env::set_current_dir(&cwd).unwrap();
+
+        let path = "libmysofa-sys/libmysofa/tests/TU-Berlin_QU_KEMAR_anechoic_radius_0.5m.sofa";
+        let data = std::fs::read(path).unwrap();
+
+        match hdf::parse(&data) {
+            Ok(obj) => {
+                assert_eq!(obj.name, "root");
+            }
+            Err(e) => {
+                panic!("Parse failed: {:?}", e);
+            }
+        }
     }
 }

@@ -1,0 +1,29 @@
+[graph]
+all-features = true
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "0BSD",
+    "Zlib",
+    "Unicode-3.0",
+    "BSD-3-Clause",
+]
+unused-allowed-license = "allow"
+confidence-threshold = 0.8
+
+[[licenses.clarify]]
+name = "libmysofa-sys"
+expression = "MIT"
+license-files = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

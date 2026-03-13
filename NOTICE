@@ -1,0 +1,20 @@
+NOTICE
+
+This software contains code derived from the libmysofa project.
+
+libmysofa
+---------
+Copyright (c) 2016-2017, Symonics GmbH, Christian Hoene
+Licensed under the BSD 3-Clause License
+https://github.com/hoene/libmysofa
+
+The following components are derived from libmysofa:
+
+  - HDF5 file format parser (src/hdf/)
+  - SOFA/HRTF algorithms (src/sofa/): spatial lookup, interpolation,
+    coordinate conversion, loudness normalization, validation
+
+The KD-tree implementation is based on work by:
+
+  Copyright (C) 2007-2011 John Tsiombikas <nuclear@member.fsf.org>
+  Licensed under BSD 3-Clause License

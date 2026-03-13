@@ -1,6 +1,9 @@
 name: Rust
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 
 env:
   CARGO_TERM_COLOR: always
@@ -11,25 +14,25 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macOS-latest]
+        os: [ubuntu-latest, macos-latest]
         rust: [stable, beta]
 
     steps:
-    - uses: hecrj/setup-rust-action@v2
-      with:
-        rust-version: ${{ matrix.rust }}${{ matrix.toolchain }}
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: true
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust }}
+    - uses: Swatinem/rust-cache@v2.8.2
     - name: Install dependencies
       if: matrix.os == 'ubuntu-latest'
       run: |
-        export DEBIAN_FRONTED=noninteractive
+        export DEBIAN_FRONTEND=noninteractive
         sudo apt-get -qq update
         sudo apt-get install -y libasound2-dev
     - name: Run tests
-      run: |
-        cargo test --verbose --workspace --all-features
+      run: cargo test --workspace --all-features
 
   test-windows:
     name: Test (Windows)
@@ -39,73 +42,76 @@ jobs:
         rust: [stable, beta]
 
     steps:
-    - uses: hecrj/setup-rust-action@v2
-      with:
-        rust-version: ${{ matrix.rust }}
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: true
-    - uses: crazy-max/ghaction-chocolatey@v1
+    - uses: dtolnay/rust-toolchain@master
       with:
-        args: install -y pkgconfiglite --checksum 6004df17818f5a6dbf19cb335cc92702
+        toolchain: ${{ matrix.rust }}
+    - uses: Swatinem/rust-cache@v2.8.2
+    - name: Install pkg-config
+      run: choco install -y pkgconfiglite
     - name: Run tests
-      run: |
-        cargo test --verbose --workspace --all-features
+      run: cargo test --workspace --all-features
 
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           submodules: true
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          override: true
           components: rustfmt
-      - uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+      - run: cargo fmt --all -- --check
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           submodules: true
-      - uses: actions-rs/toolchain@v1
+      - name: Install dependencies
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get -qq update
+          sudo apt-get install -y libasound2-dev
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          override: true
           components: clippy
-      - uses: actions-rs/clippy-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          args: -- -D warnings
+      - uses: Swatinem/rust-cache@v2.8.2
+      - run: cargo clippy --workspace --all-features -- -D warnings
 
   coverage:
     name: Code coverage
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           submodules: true
-
-      - name: Install alsa dev
-        run: sudo apt-get install -y libasound2-dev
-
-      - name: Install stable toolchain
-        uses: actions-rs/toolchain@v1
+      - name: Install dependencies
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get -qq update
+          sudo apt-get install -y libasound2-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.8.2
+      - uses: taiki-e/install-action@v2
         with:
-          toolchain: stable
-          override: true
-
+          tool: cargo-tarpaulin
       - name: Run cargo-tarpaulin
-        uses: actions-rs/tarpaulin@v0.1
+        run: cargo tarpaulin --workspace --all-features --ignore-tests
+
+  wasm:
+    name: WASM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          version: '0.15.0'
-          args: '--ignore-tests'
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2.8.2
+      - name: Check WASM build
+        run: cargo check --lib --target wasm32-unknown-unknown --all-features
