@@ -12,7 +12,7 @@ homepage = "https://github.com/andreiltd/sofar"
 categories = ["algorithms", "filesystem", "multimedia::audio"]
 
 [features]
-default = ["dsp"]
+default = ["dsp", "resample"]
 dsp = ["dep:realfft"]
 resample = ["dep:rubato", "dep:audioadapter-buffers"]
 

@@ -51,6 +51,7 @@ const DEFAULT_NEIGHBOR_ANGLE_STEP: f32 = 0.5;
 const DEFAULT_NEIGHBOR_RADIUS_STEP: f32 = 0.01;
 
 #[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
 pub enum Error {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
