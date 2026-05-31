@@ -21,24 +21,24 @@ members = ["libmysofa-sys"]
 
 [dependencies]
 arrayvec = "0.7.6"
-bitflags = "2.9.1"
-log = "0.4.27"
+bitflags = "2.11.1"
+log = "0.4.30"
 miniz_oxide = "0.9.1"
-realfft = {version = "3.4", optional = true}
-rubato = {version = "1.0.1", optional = true}
-audioadapter-buffers = {version = "2.0", optional = true}
-thiserror = "2"
-winnow = "0.7.11"
+realfft = {version = "3.5.0", optional = true}
+rubato = {version = "3.0.0", optional = true}
+audioadapter-buffers = {version = "3.0.0", optional = true}
+thiserror = "2.0.18"
+winnow = "1.0.3"
 
 [dev-dependencies]
-anyhow = "1.0"
-arc-swap = "1"
-assert_approx_eq = "1.1"
-hound = "3.5"
-cpal = "0.17"
-criterion = "0.8"
-rand = "0.10"
-ringbuf = "0.5"
+anyhow = "1.0.102"
+arc-swap = "1.9.1"
+assert_approx_eq = "1.1.0"
+hound = "3.5.1"
+cpal = "0.17.3"
+criterion = "0.8.2"
+rand = "0.10.1"
+ringbuf = "0.5.0"
 
 [[bench]]
 name = "renderer"

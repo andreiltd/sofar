@@ -13,11 +13,11 @@ categories = ["external-ffi-bindings"]
 exclude = ["libmysofa/tests"]
 
 [dependencies]
-libz-sys = { version = "1.1", default-features = false, features = ["static", "libc"] }
+libz-sys = { version = "1.1.29", default-features = false, features = ["static", "libc"] }
 
 [build-dependencies]
-cc = "1.0.101"
-system-deps = "7.0"
+cc = "1.2.63"
+system-deps = "7.0.8"
 
 [package.metadata.system-deps]
 libmysofa = "1.3"
