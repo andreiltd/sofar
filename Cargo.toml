@@ -25,7 +25,7 @@ bitflags = "2.11.1"
 log = "0.4.30"
 miniz_oxide = "0.9.1"
 realfft = {version = "3.5.0", optional = true}
-rubato = {version = "3.0.0", optional = true}
+rubato = {version = "4.0.0", optional = true}
 audioadapter-buffers = {version = "3.0.0", optional = true}
 thiserror = "2.0.18"
 winnow = "1.0.3"
