@@ -61,14 +61,30 @@ pub(crate) struct HeaderMessage {
     pub flags: HeaderMessageFlags,
 }
 
+/// Size of a message prefix: type (1) + size (2) + flags (1), plus the
+/// creation order field (2) when attribute creation order is tracked.
+///
+/// A header chunk may end with a gap that is always smaller than this prefix
+/// (HDF5 spec IV.A.2, "Gaps in chunks"). Message loops must stop as soon as
+/// fewer than `prefix` bytes remain before the checksum, otherwise the gap
+/// and checksum bytes get read as a bogus message.
+fn message_prefix_size(data_object_flags: DataObjectFlags) -> usize {
+    if data_object_flags.contains(DataObjectFlags::ATTRIBUTE_CREATION_ORDER_TRACKED) {
+        6
+    } else {
+        4
+    }
+}
+
 pub(crate) fn collect_all_messages(
     input: &mut Input,
     end_of_messages: usize,
     data_object_flags: DataObjectFlags,
 ) -> ModalResult<Vec<HeaderMessage>> {
     let mut all_messages = Vec::new();
+    let prefix = message_prefix_size(data_object_flags);
 
-    while input.current_token_start() < end_of_messages - 4 {
+    while input.current_token_start() + prefix <= end_of_messages {
         let message = message_entry(data_object_flags).parse_next(input)?;
 
         match message.kind {
@@ -82,6 +98,10 @@ pub(crate) fn collect_all_messages(
             }
         }
     }
+
+    // Skip any trailing gap so the caller is positioned at the checksum.
+    let gap = end_of_messages.saturating_sub(input.current_token_start());
+    take(gap).parse_next(input)?;
 
     Ok(all_messages)
 }
@@ -112,6 +132,13 @@ fn message_entry(
         .parse_next(input)?;
 
         let cp = input.checkpoint();
+        log::debug!(
+            "message_entry: @{:#x} kind={} size={} flags={:?}",
+            input.current_token_start(),
+            kind,
+            size,
+            flags
+        );
         let kind = message_kind(kind, size).parse_next(input)?;
 
         // Note: length mismatch can occur with unsupported data types
@@ -189,12 +216,17 @@ fn message_kind(
                 // Read continuation offset and length from message body
                 let size_of_offsets = input.state.size_of_offsets();
                 let size_of_lengths = input.state.size_of_lengths();
+                let end_of_file = input.state.end_of_file_address();
 
                 let offset = varint_size(size_of_offsets)
-                    .verify(|o| *o < 0x2000000)
+                    .verify(|o| *o > 0 && *o < end_of_file)
                     .parse_next(input)?;
+                // Block must hold at least the OCHK signature and checksum,
+                // and fit within the file.
                 let length = varint_size(size_of_lengths)
-                    .verify(|l| *l < 0x10000000)
+                    .verify(|l| {
+                        *l >= 8 && offset.checked_add(*l).is_some_and(|end| end <= end_of_file)
+                    })
                     .parse_next(input)?;
 
                 HeaderMessageKind::Continue { offset, length }
@@ -255,25 +287,39 @@ fn message_data_space(input: &mut Input) -> ModalResult<DataSpace> {
         _ => unreachable!(),
     };
 
-    let mut fill_arr = move |input: &mut Input| -> ModalResult<ArrayVec<u64, 4>> {
-        let size_of_lengths = input.state.size_of_lengths();
-        let dims = dimensionality as usize;
+    let fill_arr = |allow_unlimited: bool| {
+        move |input: &mut Input| -> ModalResult<ArrayVec<u64, 4>> {
+            let size_of_lengths = input.state.size_of_lengths();
+            let dims = dimensionality as usize;
 
-        let data: Vec<u64> = repeat(
-            dims,
-            cut_err(varint_size(size_of_lengths).verify(|d| *d <= 1_000_000)),
-        )
-        .context(StrContext::Label("Dimension Size"))
-        .context(StrContext::Expected("dimension size <= 1,000,000".into()))
-        .parse_next(input)?;
+            // Maximum dimension sizes may hold the H5S_UNLIMITED sentinel
+            // (all bits set for the file's length size), e.g. netCDF4
+            // unlimited dimensions.
+            let unlimited = if size_of_lengths >= 8 {
+                u64::MAX
+            } else {
+                (1u64 << (8 * size_of_lengths as u32)) - 1
+            };
 
-        let limited: ArrayVec<u64, 4> = data.into_iter().take(std::cmp::min(dims, 4)).collect();
+            let data: Vec<u64> = repeat(
+                dims,
+                cut_err(
+                    varint_size(size_of_lengths)
+                        .verify(move |d| *d <= 1_000_000 || (allow_unlimited && *d == unlimited)),
+                ),
+            )
+            .context(StrContext::Label("Dimension Size"))
+            .context(StrContext::Expected("dimension size <= 1,000,000".into()))
+            .parse_next(input)?;
 
-        Ok(limited)
+            let limited: ArrayVec<u64, 4> = data.into_iter().take(std::cmp::min(dims, 4)).collect();
+
+            Ok(limited)
+        }
     };
 
-    let dimension_size = fill_arr.parse_next(input)?;
-    let dimension_max_size = cond(flags & 1 != 0, fill_arr)
+    let dimension_size = fill_arr(false).parse_next(input)?;
+    let dimension_max_size = cond(flags & 1 != 0, fill_arr(true))
         .parse_next(input)?
         .unwrap_or_default();
 
@@ -942,10 +988,13 @@ fn message_continue(
 
         let _ochk_signature = "OCHK".parse_next(input)?;
 
-        let end_of_continuation = input.current_token_start() + length as usize - 4;
+        // Block layout: OCHK signature (already consumed), messages,
+        // optional gap smaller than a message prefix, 4-byte checksum.
+        let checksum_start = input.current_token_start() + length as usize - 8;
+        let prefix = message_prefix_size(data_object_flags);
         let mut continuation_messages = Vec::new();
 
-        while input.current_token_start() < end_of_continuation - 4 {
+        while input.current_token_start() + prefix <= checksum_start {
             let message = message_entry(data_object_flags).parse_next(input)?;
 
             match message.kind {
@@ -964,7 +1013,9 @@ fn message_continue(
             }
         }
 
-        take(4usize).parse_next(input)?;
+        // Skip trailing gap and checksum.
+        let to_skip = (checksum_start + 4).saturating_sub(input.current_token_start());
+        take(to_skip).parse_next(input)?;
 
         // Restore position and decrement counter
         input.reset(&cp);
