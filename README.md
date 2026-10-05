@@ -22,9 +22,8 @@ Based on the [`libmysofa`] C library by Christian Hoene / Symonics GmbH.
 ## Example
 
 ```rust
-
-use sofar::reader::{OpenOptions, Filter};
-use sofar::render::Renderer;
+use sofar::reader::{Filter, OpenOptions};
+use sofar::render::{Renderer, RendererPlan};
 
 // Open sofa file, resample HRTF data if needed to 44_100
 let sofa = OpenOptions::new()
@@ -38,12 +37,13 @@ let mut filter = Filter::new(filt_len);
 // Get filter at position
 sofa.filter(0.0, 1.0, 0.0, &mut filter);
 
-let mut render = Renderer::builder(filt_len)
-    .with_sample_rate(44100.0)
+let plan = RendererPlan::builder(filt_len)
+    .with_sample_rate(sofa.sample_rate())
     .with_partition_len(64)
     .build()
     .unwrap();
 
+let mut render = Renderer::new(&plan);
 render.set_filter(&filter).unwrap();
 
 let input = vec![0.0; 256];
@@ -55,11 +55,65 @@ let mut right = vec![0.0; 256];
 render.process_block(&input, &mut left, &mut right).unwrap();
 ```
 
+Filter delays, which some SOFA files use for interaural time differences, are
+ignored unless enabled with
+`Renderer::builder(&plan).with_max_delay(sofa.max_delay())`. For several
+sources, create one renderer per source from the same plan and mix them with
+`process_block_add`.
+
 You can run `cpal` renderer example like this:
 
 ``` shell
 cargo run --example renderer -- <FILENAME-MONO.wav> libmysofa-sys/libmysofa/share/default.sofa
 ```
+
+## Real-time filter updates
+
+`set_filter` prepares filters on the calling thread. To keep that work out of
+the audio callback, split a renderer with `into_realtime`: a worker thread
+publishes filters, and the audio thread adopts them at partition boundaries
+without allocating or freeing memory. Continuing the first example:
+
+```rust
+use sofar::render::{FilterTransition, Renderer};
+
+let (mut publisher, mut render) = Renderer::builder(&plan)
+    .with_filter_transition(FilterTransition::crossfade(32))
+    .with_max_delay(sofa.max_delay())
+    .build()
+    .unwrap()
+    .into_realtime();
+
+// Worker thread, whenever the source moves:
+sofa.filter(1.0, 0.0, 0.0, &mut filter);
+publisher.publish_filter(&filter).unwrap();
+
+// Audio callback:
+render.process_block(&input, &mut left, &mut right).unwrap();
+```
+
+- **Latest wins:** publishing replaces a filter the renderer has not adopted
+  yet; a running crossfade finishes before the next one starts.
+- **Validation:** invalid filters are rejected on the worker and never reach
+  the renderer. `publish` sends already prepared filters, such as cached ones.
+- **Memory:** displaced filters return to the publisher, which frees them when
+  publishing or on `reclaim()`.
+- **Shutdown:** once the renderer is dropped, publishing returns
+  `Error::RendererDisconnected`. Drop the renderer outside the audio callback;
+  the publisher can be dropped at any time.
+
+Custom transports can use `Renderer::set_prepared_filter` and
+`take_retired_filter`, freeing the filters they return off the audio thread.
+
+## Upgrading from 0.3
+
+- Sample rate and partition length move to `RendererPlan::builder(filter_len)`;
+  create renderers from the plan with `Renderer::new` or `Renderer::builder`.
+- `with_left_delay`/`with_right_delay` become `with_max_delay(seconds)`, e.g.
+  `with_max_delay(sofa.max_delay())`. Filters with longer delays are rejected.
+- `process_block` takes slices; `Error` is non-exhaustive with named fields.
+- `set_filter` returns an error instead of panicking on mismatched channels.
+  Its first few calls allocate; `into_realtime` keeps that off the audio thread.
 
 ## Acknowledgments
 

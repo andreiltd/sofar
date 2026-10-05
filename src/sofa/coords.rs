@@ -66,7 +66,7 @@ pub fn radius(cartesian: &[f32; 3]) -> f32 {
 /// After conversion, each triplet becomes [azimuth, elevation, radius].
 #[allow(dead_code)]
 pub fn convert_array_to_spherical(values: &mut [f32]) {
-    for chunk in values.chunks_exact_mut(3) {
+    for chunk in values.as_chunks_mut::<3>().0 {
         let cart: [f32; 3] = [chunk[0], chunk[1], chunk[2]];
         let sph = cartesian_to_spherical(cart);
         chunk[0] = sph[0];
@@ -80,7 +80,7 @@ pub fn convert_array_to_spherical(values: &mut [f32]) {
 /// The array should contain triplets of [azimuth, elevation, radius] values.
 /// After conversion, each triplet becomes [x, y, z].
 pub fn convert_array_to_cartesian(values: &mut [f32]) {
-    for chunk in values.chunks_exact_mut(3) {
+    for chunk in values.as_chunks_mut::<3>().0 {
         let sph: [f32; 3] = [chunk[0], chunk[1], chunk[2]];
         let cart = spherical_to_cartesian(sph);
         chunk[0] = cart[0];

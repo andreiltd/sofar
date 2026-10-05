@@ -2,11 +2,10 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, StreamConfig};
 
 use anyhow::{Context, Error, bail};
-use arc_swap::ArcSwap;
 use hound::WavReader;
 
 use sofar::reader::{Filter, OpenOptions, Sofar};
-use sofar::render::Renderer;
+use sofar::render::{Error as RenderError, FilterTransition, Renderer, RendererPlan};
 
 use ringbuf::{HeapRb, traits::*};
 
@@ -49,7 +48,7 @@ fn main() -> Result<(), Error> {
     let config = device.default_output_config().unwrap();
     println!("Default output config: {config:?}");
 
-    let mut stream_config = StreamConfig::from(config.clone());
+    let mut stream_config = StreamConfig::from(config);
     stream_config.channels = 2;
     stream_config.buffer_size = BufferSize::Fixed(BLOCK_LEN as u32);
 
@@ -71,22 +70,21 @@ where
     let sample_rate = config.sample_rate as f32;
     let filt_len = sofa.filter_len();
 
-    let initial_filter = Filter::new(filt_len);
-
     let mut input_buf = vec![0.0f32; BLOCK_LEN];
     let mut left = vec![0.0; BLOCK_LEN];
     let mut right = vec![0.0; BLOCK_LEN];
 
-    let mut render = Renderer::builder(filt_len)
+    let plan = RendererPlan::builder(filt_len)
         .with_sample_rate(sample_rate)
         .with_partition_len(64)
-        .build()
-        .unwrap();
+        .build()?;
 
-    render.set_filter(&initial_filter).unwrap();
-
-    let pending_filter: Arc<ArcSwap<Option<Filter>>> = Arc::new(ArcSwap::from_pointee(None));
-    let pending_clone = Arc::clone(&pending_filter);
+    // The renderer outputs silence until the worker publishes the first filter.
+    let (mut publisher, mut render) = Renderer::builder(&plan)
+        .with_filter_transition(FilterTransition::crossfade(32))
+        .with_max_delay(sofa.max_delay())
+        .build()?
+        .into_realtime();
 
     let eos = Arc::new((Mutex::new(false), Condvar::new()));
     let eos_clone = Arc::clone(&eos);
@@ -99,18 +97,13 @@ where
     }
 
     let stream = device.build_output_stream(
-        config,
+        *config,
         move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            let guard = pending_filter.load();
-            if let Some(new_filter) = guard.as_ref() {
-                let _ = render.set_filter(new_filter);
-                pending_filter.store(Arc::new(None));
-            }
-
             let data_samples = data.len();
 
             while data_samples >= consumer.occupied_len() {
                 let mut got = 0;
+
                 for s in reader.samples::<f32>().take(BLOCK_LEN).flatten() {
                     input_buf[got] = s;
                     got += 1;
@@ -118,14 +111,18 @@ where
 
                 if got < BLOCK_LEN {
                     let (lock, cvar) = &*eos_clone;
+
                     if let Ok(mut eos) = lock.lock() {
                         *eos = true;
                         cvar.notify_one();
                     }
+
                     return;
                 }
 
-                let _ = render.process_block(&input_buf, &mut left, &mut right);
+                render
+                    .process_block(&input_buf, &mut left, &mut right)
+                    .expect("renderer buffers are partition-aligned");
 
                 for (l, r) in Iterator::zip(left.iter(), right.iter()) {
                     let _ = producer.try_push(*l);
@@ -133,7 +130,7 @@ where
                 }
             }
 
-            for dst in data.chunks_exact_mut(2) {
+            for dst in data.as_chunks_mut::<2>().0 {
                 dst[0] = consumer.try_pop().unwrap_or(0.0);
                 dst[1] = consumer.try_pop().unwrap_or(0.0);
             }
@@ -144,7 +141,7 @@ where
 
     stream.play()?;
 
-    thread::spawn(move || {
+    let worker = thread::spawn(move || {
         let mut x: f32 = 1.0;
         let mut y: f32 = 0.0;
         let z: f32 = 0.0;
@@ -164,13 +161,12 @@ where
 
             sofa.filter(x, y, z, &mut filter);
 
-            let mut new_filter = Filter::new(filt_len);
-            new_filter.left.copy_from_slice(&filter.left);
-            new_filter.right.copy_from_slice(&filter.right);
-            new_filter.ldelay = filter.ldelay;
-            new_filter.rdelay = filter.rdelay;
-
-            pending_clone.store(Arc::new(Some(new_filter)));
+            match publisher.publish_filter(&filter) {
+                Ok(()) => {}
+                // The renderer was dropped with the stream.
+                Err(RenderError::RendererDisconnected) => break,
+                Err(err) => eprintln!("Failed to publish filter: {err}"),
+            }
 
             thread::sleep(time::Duration::from_millis(50));
         }
@@ -182,6 +178,13 @@ where
     while !(*eos) {
         eos = cvar.wait(eos).unwrap();
     }
+
+    // Release the lock first: the stream's callback takes it until it stops.
+    drop(eos);
+
+    // Dropping the stream drops the renderer, which stops the worker.
+    drop(stream);
+    worker.join().expect("filter worker panicked");
 
     Ok(())
 }
