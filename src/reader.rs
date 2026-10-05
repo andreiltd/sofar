@@ -354,6 +354,28 @@ impl Sofar {
         self.hrtf.sample_rate()
     }
 
+    /// Get the longest per-ear delay of any filter from this file, in seconds.
+    ///
+    /// Interpolated delays are weighted averages of measured delays, so they
+    /// never exceed this value. Pass it to
+    /// [`RendererBuilder::with_max_delay`](crate::render::RendererBuilder::with_max_delay)
+    /// to accept every filter returned by [`filter`](Self::filter) and
+    /// [`filter_nointerp`](Self::filter_nointerp).
+    ///
+    /// SOFA delays may include propagation delay, so this can be much longer
+    /// than interaural time differences, which stay below about 1 ms.
+    pub fn max_delay(&self) -> f32 {
+        let max_samples = self
+            .hrtf
+            .data_delay
+            .values
+            .iter()
+            .copied()
+            .fold(0.0, f32::max);
+
+        max_samples / self.sample_rate()
+    }
+
     /// Get the number of measurements.
     pub fn num_measurements(&self) -> u32 {
         self.hrtf.m()

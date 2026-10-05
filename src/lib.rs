@@ -17,8 +17,8 @@
 //!
 //! ```no_run
 //!
-//! use sofar::reader::{OpenOptions, Filter};
-//! use sofar::render::Renderer;
+//! use sofar::reader::{Filter, OpenOptions};
+//! use sofar::render::{Renderer, RendererPlan};
 //!
 //! // Open sofa file, resample HRTF data if needed to 44_100
 //! let sofa = OpenOptions::new()
@@ -29,16 +29,17 @@
 //! let filt_len = sofa.filter_len();
 //! let mut filter = Filter::new(filt_len);
 //!
-//! // Get filter at poistion
+//! // Get filter at position
 //! sofa.filter(0.0, 1.0, 0.0, &mut filter);
 //!
-//! let mut render = Renderer::builder(filt_len)
-//!     .with_sample_rate(44100.0)
+//! let plan = RendererPlan::builder(filt_len)
+//!     .with_sample_rate(sofa.sample_rate())
 //!     .with_partition_len(64)
 //!     .build()
 //!     .unwrap();
 //!
-//! render.set_filter(&filter);
+//! let mut render = Renderer::new(&plan);
+//! render.set_filter(&filter).unwrap();
 //!
 //! let input = vec![0.0; 256];
 //! let mut left = vec![0.0; 256];
@@ -48,6 +49,13 @@
 //!
 //! render.process_block(&input, &mut left, &mut right).unwrap();
 //! ```
+//!
+//! Use [`Renderer::builder`](render::Renderer::builder) to enable crossfades
+//! or filter delays. For real-time filter updates, split a renderer with
+//! [`into_realtime`](render::Renderer::into_realtime): a worker thread
+//! publishes filters through the [`render::FilterPublisher`], and the
+//! [`render::RealtimeRenderer`] adopts them in the audio callback without
+//! allocating or freeing memory.
 
 pub mod filter;
 

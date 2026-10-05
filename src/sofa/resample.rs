@@ -7,9 +7,9 @@
 use super::reader::Hrtf;
 
 #[cfg(feature = "resample")]
-use audioadapter_buffers::direct::SequentialSliceOfVecs;
-#[cfg(feature = "resample")]
 use rubato::audioadapter::Adapter;
+#[cfg(feature = "resample")]
+use rubato::audioadapter_buffers::direct::SequentialSliceOfVecs;
 #[cfg(feature = "resample")]
 use rubato::{Fft, FixedSync, Resampler};
 

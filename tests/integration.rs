@@ -2,7 +2,7 @@
 
 use sofar::{
     reader::{Filter, OpenOptions, Sofar},
-    render::Renderer,
+    render::{Renderer, RendererPlan},
 };
 
 const TESTS_DIR: &str = "libmysofa-sys/libmysofa/tests";
@@ -566,11 +566,13 @@ fn renderer_with_sofa() {
     let partition_len = 64;
     let block_len = partition_len * 4;
 
-    let mut renderer = Renderer::builder(filt_len)
+    let plan = RendererPlan::builder(filt_len)
         .with_sample_rate(44100.0)
         .with_partition_len(partition_len)
         .build()
-        .expect("Failed to build renderer");
+        .expect("Failed to build renderer plan");
+
+    let mut renderer = Renderer::new(&plan);
 
     renderer.set_filter(&filter).expect("Failed to set filter");
 
@@ -649,11 +651,14 @@ fn verify_spatial_rendering() {
 
     let partition_len = 64;
     let block_len = partition_len * 4;
-    let mut render = Renderer::builder(filt_len)
+
+    let plan = RendererPlan::builder(filt_len)
         .with_sample_rate(44100.0)
         .with_partition_len(partition_len)
         .build()
         .unwrap();
+
+    let mut render = Renderer::new(&plan);
 
     let mut input = vec![0.0f32; block_len];
     input[0] = 1.0; // impulse
