@@ -20,21 +20,21 @@ resample = ["dep:rubato"]
 members = ["libmysofa-sys"]
 
 [dependencies]
-arrayvec = "0.7.6"
-bitflags = "2.11.1"
-log = "0.4.30"
+arrayvec = "0.7.8"
+bitflags = "2.13.2"
+log = "0.4.34"
 miniz_oxide = "0.9.1"
 realfft = {version = "3.5.0", optional = true}
-ringbuf = {version = "0.5.0", optional = true}
-rubato = {version = "3.0.0", optional = true}
-thiserror = "2.0.18"
-winnow = "1.0.3"
+ringbuf = {version = "0.5.3", optional = true}
+rubato = {version = "5.0.1", optional = true}
+thiserror = "2.0.21"
+winnow = "1.0.4"
 
 [dev-dependencies]
-anyhow = "1.0.102"
+anyhow = "1.0.104"
 assert_approx_eq = "1.1.0"
 hound = "3.5.1"
-cpal = "0.18.1"
+cpal = "0.18.2"
 criterion = "0.8.2"
 quickcheck = { version = "1.1.0", default-features = false }
 

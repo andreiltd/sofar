@@ -43,6 +43,7 @@ pub fn build_from_src(lib: &str, version: &str) -> Result<Library, BuildInternal
         version: version.to_owned(),
         source: system_deps::Source::EnvVariables,
         link_paths: vec![dst, z_lib.to_owned()],
+        link_files: Vec::new(),
         libs: vec![
             system_deps::InternalLib {
                 name: lib.to_owned(),
