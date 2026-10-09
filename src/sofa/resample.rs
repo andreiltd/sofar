@@ -47,7 +47,6 @@ pub fn resample(hrtf: &mut Hrtf, target_rate: f32) -> Result<(), String> {
         source_rate as usize,
         target_rate as usize,
         chunk_size,
-        1, // One sub-chunk
         1, // One channel at a time
         FixedSync::Input,
     )
@@ -88,14 +87,14 @@ pub fn resample(hrtf: &mut Hrtf, target_rate: f32) -> Result<(), String> {
 
             // Feed actual data
             let output = resampler
-                .process(&input_adapter, 0, None)
+                .process(&input_adapter, None)
                 .map_err(|e| format!("Resampling failed: {}", e))?;
             collect_frames(&output, &mut all_output);
 
             // Flush with zeros until we have enough output
             while all_output.len() < total_needed {
                 let output = resampler
-                    .process(&flush_adapter, 0, None)
+                    .process(&flush_adapter, None)
                     .map_err(|e| format!("Resampling flush failed: {}", e))?;
                 if output.frames() == 0 {
                     break;
@@ -127,7 +126,7 @@ pub fn resample(hrtf: &mut Hrtf, target_rate: f32) -> Result<(), String> {
 }
 
 #[cfg(feature = "resample")]
-fn collect_frames<'a>(output: &impl Adapter<'a, f32>, dest: &mut Vec<f32>) {
+fn collect_frames(output: &impl Adapter<f32>, dest: &mut Vec<f32>) {
     for i in 0..output.frames() {
         dest.push(output.read_sample(0, i).unwrap_or(0.0));
     }
