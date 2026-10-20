@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/andreiltd/sofar/compare/sofar-v0.4.0...sofar-v0.4.1) - 2026-10-20
+
+### Other
+
+- *(deps)* bump release-plz/action from 0.5.131 to 0.5.142 ([#55](https://github.com/andreiltd/sofar/pull/55))
+- *(deps)* bump taiki-e/install-action from 2.87.23 to 2.87.28 ([#54](https://github.com/andreiltd/sofar/pull/54))
+- *(deps)* bump dtolnay/rust-toolchain ([#53](https://github.com/andreiltd/sofar/pull/53))
+
 ## [0.4.0](https://github.com/andreiltd/sofar/compare/sofar-v0.3.0...sofar-v0.4.0) - 2026-10-06
 
 ### Added
